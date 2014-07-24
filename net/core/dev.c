@@ -135,6 +135,11 @@
 
 #include "net-sysfs.h"
 
+#ifdef CONFIG_PICOTCP
+#include "pico_stack.h"
+#include "pico_device.h"
+#endif
+
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
 
@@ -3332,8 +3337,12 @@ static int netif_rx_internal(struct sk_buff *skb)
 int netif_rx(struct sk_buff *skb)
 {
 	trace_netif_rx_entry(skb);
-
+#ifdef CONFIG_PICOTCP
+    pico_stack_recv(skb->dev->picodev, skb->data, skb->len);
+    return 0;
+#else
 	return netif_rx_internal(skb);
+#endif
 }
 EXPORT_SYMBOL(netif_rx);
 
@@ -6009,6 +6018,10 @@ static int netif_alloc_netdev_queues(struct net_device *dev)
  *	will not get the same name.
  */
 
+#ifdef CONFIG_PICOTCP
+void pico_dev_attach(struct net_device *netdev);
+#endif
+
 int register_netdevice(struct net_device *dev)
 {
 	int ret;
@@ -6116,6 +6129,7 @@ int register_netdevice(struct net_device *dev)
 	if (dev->addr_assign_type == NET_ADDR_PERM)
 		memcpy(dev->perm_addr, dev->dev_addr, dev->addr_len);
 
+
 	/* Notify protocols, that a new device appeared. */
 	ret = call_netdevice_notifiers(NETDEV_REGISTER, dev);
 	ret = notifier_to_errno(ret);
@@ -6130,6 +6144,10 @@ int register_netdevice(struct net_device *dev)
 	if (!dev->rtnl_link_ops ||
 	    dev->rtnl_link_state == RTNL_LINK_INITIALIZED)
 		rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U, GFP_KERNEL);
+
+#ifdef CONFIG_PICOTCP
+    pico_dev_attach(dev);
+#endif
 
 out:
 	return ret;
