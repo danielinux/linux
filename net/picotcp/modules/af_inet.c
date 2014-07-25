@@ -8,6 +8,7 @@
 
 #include "pico_device.h"
 #include "pico_stack.h"
+#include "pico_ipv4.h"
 #include "linux/netdevice.h"
 #include "linux/kthread.h"
 #include <linux/err.h>
@@ -82,20 +83,38 @@ struct pico_device_linux {
     struct net_device *netdev;
 };
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static int pico_linux_poll(struct pico_device *dev, int loop_score)
+{
+    struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
+    if (!lnx || !lnx->netdev || !lnx->netdev->netdev_ops)
+        return loop_score;
+    if (lnx->netdev->netdev_ops->ndo_poll_controller) {
+        lnx->netdev->netdev_ops->ndo_poll_controller(lnx->netdev);
+    }
+    return --loop_score;
+}
+#endif
+
 
 static int pico_linux_send(struct pico_device *dev, void *buf, int len)
 {
     struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
     struct sk_buff *skb;
+    uint8_t *start_buf;
     int ret;
-    printk("network send called\n");
+    printk("%s: network send called (%d bytes)\n", lnx->netdev->name, len);
 
     skb = alloc_skb(len, GFP_ATOMIC);
     if (!skb)
         return 0;
     skb->dev = ((struct pico_device_linux*)dev)->netdev;
-    skb->data = buf;
-    skb->len = len;
+    start_buf = skb_put(skb, len);
+    if (!start_buf) {
+        kfree_skb(skb);
+        return 0;
+    }
+    memcpy(start_buf, buf, len);
     if (!pico_stack_is_ready) {
         kfree_skb(skb);
         printk("network send: stack not ready\n");
@@ -112,6 +131,18 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
 
     kfree_skb(skb);
     return ret;
+}
+
+static rx_handler_result_t pico_linux_recv(struct sk_buff **pskb)
+{
+	struct sk_buff *skb = *pskb;
+    struct pico_device_linux *lnx;
+    BUG_ON(!skb);
+    BUG_ON(!skb->dev);
+    lnx = (struct pico_device_linux *)skb->dev->picodev;
+    printk("%s:network recv (%d B)\n", lnx->netdev->name, skb->len);
+    pico_stack_recv(&lnx->dev, skb->data, skb->len);
+    return RX_HANDLER_CONSUMED;
 }
 
 struct timer_list picotcp_dev_attach_retry_timer;
@@ -133,6 +164,9 @@ static void picotcp_dev_attach_retry(unsigned long x)
 void pico_dev_attach(struct net_device *netdev)
 {
     struct pico_device_linux *pico_linux_dev = PICO_ZALLOC(sizeof(struct pico_device_linux));
+    uint8_t *macaddr = NULL;
+    const uint8_t macaddr_zero[6] = {0, 0, 0, 0, 0, 0};
+
 
     if (!netdev)
         return;
@@ -149,16 +183,36 @@ void pico_dev_attach(struct net_device *netdev)
     if (!pico_linux_dev)
         return; /* FIXME Too bad, this device is not initialized and nobody cares. */
 
+    if (memcmp(netdev->dev_addr, macaddr_zero, 6) != 0) {
+        macaddr = (uint8_t *) netdev->dev_addr;
+    }
+
     spin_lock(&picotcp_spin);
-    if( 0 != pico_device_init(&pico_linux_dev->dev, netdev->name, (uint8_t *)netdev->dev_addr)) {
+    if( 0 != pico_device_init(&pico_linux_dev->dev, netdev->name, macaddr)) {
         spin_unlock(&picotcp_spin);
         return;
     }
 
     pico_linux_dev->netdev = netdev;
     pico_linux_dev->dev.send = pico_linux_send;
+    if (netdev_rx_handler_register(netdev, pico_linux_recv, NULL) < 0) {
+        printk("%s: unable to register for RX events\n", netdev->name);
+    }
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+    pico_linux_dev->dev.poll = pico_linux_poll;
+#endif
     dbg("Device %s created.\n", pico_linux_dev->dev.name);
     netdev->picodev = &pico_linux_dev->dev;
+
+    /* TEST: Eth0 has hardcoded ip address */
+    if (strcmp(netdev->name, "eth0") == 0) {
+        struct pico_ip4 pico_test_addr;
+        struct pico_ip4 pico_test_mask;
+        pico_string_to_ipv4("10.99.0.6", &pico_test_addr.addr);
+        pico_string_to_ipv4("255.255.255.0", &pico_test_mask.addr);
+        pico_ipv4_link_add(&pico_linux_dev->dev, pico_test_addr, pico_test_mask);
+    }
     spin_unlock(&picotcp_spin);
 
 }
@@ -192,6 +246,8 @@ int __init picotcp_init(void)
     tasklet_init(&picotcp_tick_task, picotcp_tick, 0);
     add_timer(&picotcp_tick_timer);
     printk("Task PicoTCP created.\n");
+
+
     return 0;
 }
 fs_initcall(picotcp_init);
@@ -201,7 +257,7 @@ fs_initcall(picotcp_init);
 static int picotcp_create(struct net *net, struct socket *sock, int protocol, int kern)
 {
     /* TODO: Attach socket interface */
-    return -1;
+    return 0;
 }
 
 

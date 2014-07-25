@@ -1273,6 +1273,7 @@ static int __dev_open(struct net_device *dev)
 		ret = ops->ndo_open(dev);
 
 	netpoll_poll_enable(dev);
+    printk("%s:Netpoll enabled.\n", dev->name);
 
 	if (ret)
 		clear_bit(__LINK_STATE_START, &dev->state);
@@ -3292,7 +3293,14 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
+
 	trace_netif_rx(skb);
+#ifdef CONFIG_PICOTCP
+    printk("%s: Netif_rx called, packet len is %d\n", skb->dev->name, skb->len);
+    pico_stack_recv(skb->dev->picodev, skb->data, skb->len);
+    return 0;
+#endif
+
 #ifdef CONFIG_RPS
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;
@@ -3337,12 +3345,7 @@ static int netif_rx_internal(struct sk_buff *skb)
 int netif_rx(struct sk_buff *skb)
 {
 	trace_netif_rx_entry(skb);
-#ifdef CONFIG_PICOTCP
-    pico_stack_recv(skb->dev->picodev, skb->data, skb->len);
-    return 0;
-#else
 	return netif_rx_internal(skb);
-#endif
 }
 EXPORT_SYMBOL(netif_rx);
 
@@ -3711,6 +3714,14 @@ unlock:
 static int __netif_receive_skb(struct sk_buff *skb)
 {
 	int ret;
+#ifdef CONFIG_PICOTCP
+    printk("%s: Netif_receive_skb called, packet len is %d, data len is %d\n", skb->dev->name, skb->len, skb->data_len);
+    if (skb->protocol > 0)
+        pico_stack_recv(skb->dev->picodev, skb->data - 14, skb->len + 14);
+    else 
+        pico_stack_recv(skb->dev->picodev, skb->data, skb->data_len);
+    return NET_RX_SUCCESS;
+#endif
 
 	if (sk_memalloc_socks() && skb_pfmemalloc(skb)) {
 		unsigned long pflags = current->flags;
@@ -5353,13 +5364,17 @@ EXPORT_SYMBOL(dev_set_allmulti);
 void __dev_set_rx_mode(struct net_device *dev)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
-
+    printk("%s: Called set_rx_mode...\n", dev->name);
 	/* dev_open will call this function so the list will stay sane. */
-	if (!(dev->flags&IFF_UP))
+	if (!(dev->flags&IFF_UP)) {
+        printk("Device not up!\n");
 		return;
+    }
 
-	if (!netif_device_present(dev))
+	if (!netif_device_present(dev)) {
+        printk("Device not present!\n");
 		return;
+    }
 
 	if (!(dev->priv_flags & IFF_UNICAST_FLT)) {
 		/* Unicast addresses changes may only happen under the rtnl,
@@ -5376,6 +5391,7 @@ void __dev_set_rx_mode(struct net_device *dev)
 
 	if (ops->ndo_set_rx_mode)
 		ops->ndo_set_rx_mode(dev);
+    printk("Called set_rx_mode...success\n");
 }
 
 void dev_set_rx_mode(struct net_device *dev)
@@ -6147,6 +6163,7 @@ int register_netdevice(struct net_device *dev)
 
 #ifdef CONFIG_PICOTCP
     pico_dev_attach(dev);
+    dev_open(dev);
 #endif
 
 out:
