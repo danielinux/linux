@@ -1,0 +1,105 @@
+menuconfig PICOTCP 
+    bool "PicoTCP"
+    depends on !INET
+    default n
+if PICOTCP
+
+config PICOTCP_IPV4
+    bool "Support IP version 4"
+    default y
+
+config PICOTCP_IPV6
+    bool "Support IP version 6"
+    default y
+
+config PICOTCP_DEVLOOP
+    bool "Support loopback device"
+    default n
+
+config PICOTCP_CRC
+    bool "Enforce CRC checking on incoming packets"
+    default n
+
+config PICOTCP_ETH
+    depends on PICOTCP_IPV4
+    bool "Support for ARP (IPv4 neighbor discovery)"
+    default y
+
+
+config PICOTCP_TCP
+    depends on PICOTCP_IPV4 || PICOTCP_IPV6
+    bool "Support TCP socket communication"
+    default y
+
+
+config PICOTCP_UDP
+    depends on PICOTCP_IPV4 || PICOTCP_IPV6
+    bool "Support UDP socket communication"
+    default y
+
+config PICOTCP_IPFRAG
+    depends on PICOTCP_IPV4
+    bool "Support IPv4 Fragmentation"
+    default n
+
+config PICOTCP_NAT
+    depends on PICOTCP_IPV4
+    bool "Support IPv4 Network Address Translation (NAT)"
+    default n
+
+config PICOTCP_ICMP4
+    depends on PICOTCP_IPV4
+    bool "Support for ICMP over IPv4"
+    default y
+
+config PICOTCP_PING
+    depends on PICOTCP_ICMP4
+    bool "Support for ICMP PING API"
+    default n
+
+config PICOTCP_MCAST
+    depends on PICOTCP_UDP
+    bool "Support for Multicast traffic"
+    default y
+
+config PICOTCP_DHCP_CLIENT
+    depends on PICOTCP_UDP && PICOTCP_IPV4
+    bool "DHCP client for IPv4 automatic configuration"
+    default n
+
+config PICOTCP_DHCP_SERVER
+    depends on PICOTCP_UDP && PICOTCP_IPV4
+    bool "DHCP server for IPv4 automatic configuration"
+    default n
+
+config PICOTCP_DNS_CLIENT
+    depends on PICOTCP_UDP
+    bool "DNS client for dynamic name resolution"
+    default n
+
+config PICOTCP_IPFILTER
+    depends on PICOTCP_IPV4
+    bool "Firewall API for packet filtering"
+    default n
+
+config PICOTCP_OLSR
+    depends on PICOTCP_IPV4 && PICOTCP_MCAST
+    bool "Support OLSR (Optimized Link State Routing) for MESH networks"
+    default n
+
+config PICOTCP_SLAACV4
+    depends on PICOTCP_IPV4
+    bool "Support for automatic IP address assignment (like AVAHI)"
+    default n
+
+config PICOTCP_SNTP_CLIENT
+    depends on PICOTCP_DNS_CLIENT
+    bool "Support for Network Time Protocol (NTP) for real time clock configuration"
+    default n
+
+config PICOTCP_MEMORY_MANAGER
+    bool "Support for PicoTCP native memory management"
+    default n
+
+endif
+    

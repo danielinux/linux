@@ -82,6 +82,8 @@ source "net/netlabel/Kconfig"
 
 endif # if INET
 
+source "net/picotcp/Kconfig"
+
 config NETWORK_SECMARK
 	bool "Security Marking"
 	help
