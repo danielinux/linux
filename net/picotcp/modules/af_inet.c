@@ -84,7 +84,7 @@ struct pico_device_linux {
 };
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
-static int pico_linux_poll(struct pico_device *dev, int loop_score)
+}static int pico_linux_poll(struct pico_device *dev, int loop_score)
 {
     struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
     if (!lnx || !lnx->netdev || !lnx->netdev->netdev_ops)
@@ -102,40 +102,55 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
     struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
     struct sk_buff *skb;
     uint8_t *start_buf;
-    int ret;
     printk("%s: network send called (%d bytes)\n", lnx->netdev->name, len);
+    rcu_read_lock();
 
-    skb = alloc_skb(len, GFP_ATOMIC);
+    //skb = netdev_alloc_skb(lnx->netdev, len);
+    skb = __netdev_alloc_skb(lnx->netdev, len, GFP_DMA);
     if (!skb)
-        return 0;
+        goto fail_unlock;
     skb->dev = ((struct pico_device_linux*)dev)->netdev;
     start_buf = skb_put(skb, len);
     if (!start_buf) {
-        kfree_skb(skb);
-        return 0;
+      printk("failed skb_put!\n");
+      goto fail_free;
     }
     memcpy(start_buf, buf, len);
     if (!pico_stack_is_ready) {
-        kfree_skb(skb);
         printk("network send: stack not ready\n");
-        return 0;
+        goto fail_free;
     }
 
     if (!lnx->netdev || !lnx->netdev->netdev_ops || !lnx->netdev->netdev_ops->ndo_start_xmit) {
         printk("network send: device %s not ready\n", lnx->netdev->name);
-        kfree_skb(skb);
-        return 0;
+        goto fail_free;
     }
-    ret = lnx->netdev->netdev_ops->ndo_start_xmit(skb, lnx->netdev);
-    printk("network send: done!\n");
+    if (dev->eth) {
+      skb->mac_header = skb->data - skb->head;
+      skb->network_header = skb->mac_header + 14;
+    } else {
+      skb->network_header = skb->data - skb->head;
+    }
 
+    /* Deliver the packet to the device driver */
+    if (NETDEV_TX_OK != dev_queue_xmit(skb)) {
+      printk("Error queuing TX frame!\n");
+      goto fail_free;
+    }
+    rcu_read_unlock();
+    printk("network send: done!\n");
+    return len;
+
+fail_free:
     kfree_skb(skb);
-    return ret;
+fail_unlock:
+    rcu_read_unlock();
+    return 0;
 }
 
 static rx_handler_result_t pico_linux_recv(struct sk_buff **pskb)
 {
-	struct sk_buff *skb = *pskb;
+  struct sk_buff *skb = *pskb;
     struct pico_device_linux *lnx;
     BUG_ON(!skb);
     BUG_ON(!skb->dev);
@@ -181,7 +196,7 @@ void pico_dev_attach(struct net_device *netdev)
     }
 
     if (!pico_linux_dev)
-        return; /* FIXME Too bad, this device is not initialized and nobody cares. */
+        panic("Unable to initialize network device\n"); 
 
     if (memcmp(netdev->dev_addr, macaddr_zero, 6) != 0) {
         macaddr = (uint8_t *) netdev->dev_addr;
@@ -204,6 +219,11 @@ void pico_dev_attach(struct net_device *netdev)
 #endif
     dbg("Device %s created.\n", pico_linux_dev->dev.name);
     netdev->picodev = &pico_linux_dev->dev;
+
+/* 
+    if (netdev->netdev_ops)
+      dev_set_mtu(netdev, 1500);
+*/
 
     /* TEST: Eth0 has hardcoded ip address */
     if (strcmp(netdev->name, "eth0") == 0) {
@@ -262,9 +282,9 @@ static int picotcp_create(struct net *net, struct socket *sock, int protocol, in
 
 
 static const struct net_proto_family picotcp_family_ops = {
-	.family = PF_INET,
-	.create = picotcp_create,
-	.owner	= THIS_MODULE,
+  .family = PF_INET,
+  .create = picotcp_create,
+  .owner  = THIS_MODULE,
 };
 
 MODULE_ALIAS_NETPROTO(PF_INET);
