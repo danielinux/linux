@@ -9,6 +9,7 @@
 #include "pico_device.h"
 #include "pico_stack.h"
 #include "pico_ipv4.h"
+#include "pico_bsd_sockets.h"
 #include "linux/netdevice.h"
 #include "linux/kthread.h"
 #include <linux/err.h>
@@ -43,37 +44,9 @@ static volatile int pico_stack_is_ready;
 #pragma GCC optimize("O0")
 
 
-static DEFINE_SPINLOCK(picotcp_spin);
-#ifdef ONE_TASK_PICOTCP
-static struct task_struct *kpicotcpd_task; 
-
-/* Stack main thread */
-static int picotcp_main_thread(void *unused)
-{
-    unsigned long now;
-    printk(KERN_INFO "Starting TCP/IP stack.");
-    if (pico_stack_init() < 0)
-        return -1;
-
-    pico_stack_is_ready++;
-
-    now = jiffies;
-
-    for(;;) {
-        set_current_state(TASK_INTERRUPTIBLE);
-        schedule();
-        if (now + PICOTCP_INTERVAL < jiffies) {
-            set_current_state(TASK_RUNNING);
-            now = jiffies;
-            pico_stack_tick();
-        }
-    }
-    return 0;
-}
-#endif
-
-static struct timer_list picotcp_tick_timer;
-static struct tasklet_struct picotcp_tick_task;
+DEFINE_SPINLOCK(picotcp_spin);
+static struct workqueue_struct *picotcp_workqueue;
+static struct delayed_work picotcp_work;
 
 
 /* Device related */
@@ -237,21 +210,13 @@ void pico_dev_attach(struct net_device *netdev)
 
 }
 
-static void picotcp_timeout_tick(unsigned long unused)
-{
-    (void)unused;
-    tasklet_schedule(&picotcp_tick_task);
-    picotcp_tick_timer.expires = jiffies + msecs_to_jiffies(PICOTCP_INTERVAL);
-    add_timer(&picotcp_tick_timer);
-}
-static void picotcp_tick(unsigned long unused)
+static void picotcp_tick(struct work_struct *unused)
 {
     (void)unused;
     if (pico_stack_is_ready) {
-        spin_lock(&picotcp_spin);
-        pico_stack_tick();
-        spin_unlock(&picotcp_spin);
+        pico_bsd_stack_tick();
     }
+    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
 }
 
 /* Stack Init Functions */
@@ -259,15 +224,12 @@ int __init picotcp_init(void)
 {
     if (pico_stack_init() < 0)
         panic("Unable to start picoTCP\n");
+    pico_bsd_init();
     pico_stack_is_ready++;
-    init_timer(&picotcp_tick_timer);
-    picotcp_tick_timer.expires = jiffies + msecs_to_jiffies(PICOTCP_INTERVAL);
-    picotcp_tick_timer.function = picotcp_timeout_tick;
-    tasklet_init(&picotcp_tick_task, picotcp_tick, 0);
-    add_timer(&picotcp_tick_timer);
-    printk("Task PicoTCP created.\n");
-
-
+    picotcp_workqueue = create_singlethread_workqueue("picotcp_tick");
+    INIT_DELAYED_WORK(&picotcp_work, picotcp_tick);
+    printk("PicoTCP created.\n");
+    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
     return 0;
 }
 fs_initcall(picotcp_init);
@@ -276,7 +238,6 @@ fs_initcall(picotcp_init);
 
 static int picotcp_create(struct net *net, struct socket *sock, int protocol, int kern)
 {
-    /* TODO: Attach socket interface */
     return 0;
 }
 

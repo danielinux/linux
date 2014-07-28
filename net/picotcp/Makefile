@@ -10,7 +10,7 @@ obj-y     := stack/pico_device.o \
 			stack/pico_socket_multicast.o \
 			stack/pico_stack.o \
 			stack/pico_tree.o \
-			modules/af_inet.o \
+			modules/pico_linux.o \
 			modules/pico_osal_linux.o \
 			modules/pico_bsd_sockets.o
 

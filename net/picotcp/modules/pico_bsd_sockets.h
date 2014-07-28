@@ -29,6 +29,7 @@ struct pico_bsd_endpoint;
 #include <netinet/in.h>
 #include <netdb.h>
 #include <fcntl.h>
+#define STDSOCKET
 static inline int sockopt_get_name(int posix_name)
 {
     switch (posix_name) {
@@ -45,7 +46,9 @@ static inline int sockopt_get_name(int posix_name)
 
 
 #else
+
 typedef int socklen_t;
+#ifndef __KERNEL__
 #define AF_INET     (PICO_PROTO_IPV4)
 #define AF_INET6    (PICO_PROTO_IPV6)
 #define SOCK_STREAM  (PICO_PROTO_TCP)
@@ -97,6 +100,7 @@ struct __attribute__((packed)) sockaddr_storage {
     uint16_t ss_family;
     uint8_t  _pad[(SOCKSIZE6 - sizeof(uint16_t))];
 };
+#endif
 
 /* getaddrinfo */
 struct addrinfo {
