@@ -101,12 +101,12 @@ static int picotcp_release(struct socket *sock)
 }
 
 static int picotcp_gifconf(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogflags(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogmac(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogmtu(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogaddr(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogbrd(struct socket *sock, unsigned int cmd, unsigned long arg);
-static int picotcp_iogmask(struct socket *sock, unsigned int cmd, unsigned long arg);
+static int picotcp_iosgflags(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
+static int picotcp_iosgmac(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
+static int picotcp_iosgmtu(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
+static int picotcp_iosgaddr(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
+static int picotcp_iosgbrd(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
+static int picotcp_iosgmask(struct socket *sock, unsigned int cmd, unsigned long arg, int set);
 
 static int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
@@ -124,23 +124,23 @@ static int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long ar
       err = picotcp_gifconf(sock, cmd, arg);
       break;
     case SIOCGIFFLAGS:
-      err = picotcp_iogflags(sock, cmd, arg);
+      err = picotcp_iosgflags(sock, cmd, arg, 0);
       break;
     case SIOCGIFHWADDR:
-      err = picotcp_iogmac(sock, cmd, arg);
+      err = picotcp_iosgmac(sock, cmd, arg, 0);
       break;
     case SIOCGIFMTU:
-      err = picotcp_iogmtu(sock, cmd, arg);
+      err = picotcp_iosgmtu(sock, cmd, arg, 0);
       break;
     case SIOCGIFADDR:
     case SIOCGIFDSTADDR:
-      err = picotcp_iogaddr(sock, cmd, arg);
+      err = picotcp_iosgaddr(sock, cmd, arg, 0);
       break;
     case SIOCGIFBRDADDR:
-      err = picotcp_iogbrd(sock, cmd, arg);
+      err = picotcp_iosgbrd(sock, cmd, arg, 0);
       break;
     case SIOCGIFNETMASK:
-      err = picotcp_iogmask(sock, cmd, arg);
+      err = picotcp_iosgmask(sock, cmd, arg, 0);
       break;
     case SIOCGIFMETRIC:
     case SIOCGIFMAP:
@@ -159,6 +159,21 @@ static int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long ar
       err = 0;
       break;
     }
+
+    /* Set functions */
+
+    case SIOCSIFADDR:
+      err = picotcp_iosgaddr(sock, cmd, arg, 1);
+      break;
+    case SIOCSIFBRDADDR:
+      err = picotcp_iosgbrd(sock, cmd, arg, 1);
+      break;
+    case SIOCSIFNETMASK:
+      err = picotcp_iosgmask(sock, cmd, arg, 1);
+      break;
+    case SIOCSIFFLAGS:
+      err = picotcp_iosgflags(sock, cmd, arg, 1);
+      break;
 
     default:
       err = -EOPNOTSUPP;
@@ -246,7 +261,7 @@ static int picodev_to_ifreq(const char *ifname, struct ifreq *ifr) {
   return 0;
 }
 
-static int picotcp_iogaddr(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgaddr(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
@@ -262,6 +277,20 @@ static int picotcp_iogaddr(struct socket *sock, unsigned int cmd, unsigned long 
   addr = (struct sockaddr_in *) &ifr->ifr_addr;
 
   l = pico_ipv4_link_by_dev(dev);
+  if (set) {
+    if (!l || addr->sin_addr.s_addr != l->address.addr) {
+      struct pico_ip4 a, nm;
+      a.addr = addr->sin_addr.s_addr;
+      if (l)
+        nm.addr = l->netmask.addr;
+      else
+        nm.addr = htonl(0xFFFFFF00); /* Default 24 bit nm */
+      if (l)
+        pico_ipv4_link_del(dev, l->address);
+      pico_ipv4_link_add(dev, a, nm);
+    }
+    return 0;
+  }
   addr->sin_family = AF_INET;
   if (!l) {
     addr->sin_addr.s_addr = 0U;
@@ -271,7 +300,7 @@ static int picotcp_iogaddr(struct socket *sock, unsigned int cmd, unsigned long 
   return 0;
 }
 
-static int picotcp_iogbrd(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgbrd(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
@@ -284,6 +313,10 @@ static int picotcp_iogbrd(struct socket *sock, unsigned int cmd, unsigned long a
   dev = pico_get_device(ifr->ifr_name);
   if (!dev)
     return -ENOENT;
+
+  if (set)
+    return -EOPNOTSUPP;
+
   addr = (struct sockaddr_in *) &ifr->ifr_addr;
 
   l = pico_ipv4_link_by_dev(dev);
@@ -296,7 +329,7 @@ static int picotcp_iogbrd(struct socket *sock, unsigned int cmd, unsigned long a
   return 0;
 }
 
-static int picotcp_iogmask(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgmask(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
@@ -312,6 +345,20 @@ static int picotcp_iogmask(struct socket *sock, unsigned int cmd, unsigned long 
   addr = (struct sockaddr_in *) &ifr->ifr_addr;
 
   l = pico_ipv4_link_by_dev(dev);
+  if (!l)
+    return -ENOENT;
+
+  if (set) {
+    if (addr->sin_addr.s_addr != l->netmask.addr) {
+      struct pico_ip4 a, nm;
+      a.addr = l->address.addr;
+      nm.addr = addr->sin_addr.s_addr;
+      pico_ipv4_link_del(dev, l->address);
+      pico_ipv4_link_add(dev, a, nm);
+    }
+    return 0;
+  }
+
   addr->sin_family = AF_INET;
   if (!l) {
     addr->sin_addr.s_addr = 0U;
@@ -321,7 +368,7 @@ static int picotcp_iogmask(struct socket *sock, unsigned int cmd, unsigned long 
   return 0;
 }
 
-static int picotcp_iogflags(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgflags(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
@@ -332,6 +379,16 @@ static int picotcp_iogflags(struct socket *sock, unsigned int cmd, unsigned long
   dev = pico_get_device(ifr->ifr_name);
   if (!dev)
     return -ENOENT;
+
+  /* Set flags: we only care about UP flag being reset */
+  if (set && ((ifr->ifr_flags & IFF_UP) == 0) ) {
+    struct pico_ipv4_link *l = pico_ipv4_link_by_dev(dev);
+    while(l) {
+      pico_ipv4_link_del(dev, l->address);
+      l = pico_ipv4_link_by_dev(dev);
+    }
+    return 0;
+  }
 
   ifr->ifr_flags = IFF_BROADCAST | IFF_MULTICAST;
 
@@ -346,12 +403,15 @@ static int picotcp_iogflags(struct socket *sock, unsigned int cmd, unsigned long
 }
 
 
-static int picotcp_iogmac(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgmac(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
   if (!arg)
     return -EINVAL;
+
+  if (set)
+    return -EOPNOTSUPP; /* Can't change macaddress on the fly... */
 
   ifr = (struct ifreq *)arg;
   dev = pico_get_device(ifr->ifr_name);
@@ -375,12 +435,15 @@ static int picotcp_iogmac(struct socket *sock, unsigned int cmd, unsigned long a
   return 0;
 }
 
-static int picotcp_iogmtu(struct socket *sock, unsigned int cmd, unsigned long arg)
+static int picotcp_iosgmtu(struct socket *sock, unsigned int cmd, unsigned long arg, int set)
 {
   struct ifreq *ifr;
   struct pico_device *dev;
   if (!arg)
     return -EINVAL;
+
+  if (set)
+    return -EOPNOTSUPP; /* We don't support dynamic MTU now. */
 
   ifr = (struct ifreq *)arg;
   dev = pico_get_device(ifr->ifr_name);
