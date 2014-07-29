@@ -37,14 +37,16 @@
 
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
-static volatile int pico_stack_is_ready;
-#define PICOTCP_INTERVAL (5)
+
+#include <net/sock.h>
+
+volatile int pico_stack_is_ready;
+#define PICOTCP_INTERVAL (2)
 
 #pragma GCC push_options
 #pragma GCC optimize("O0")
 
 
-DEFINE_SPINLOCK(picotcp_spin);
 static struct workqueue_struct *picotcp_workqueue;
 static struct delayed_work picotcp_work;
 
@@ -175,9 +177,7 @@ void pico_dev_attach(struct net_device *netdev)
         macaddr = (uint8_t *) netdev->dev_addr;
     }
 
-    spin_lock(&picotcp_spin);
     if( 0 != pico_device_init(&pico_linux_dev->dev, netdev->name, macaddr)) {
-        spin_unlock(&picotcp_spin);
         return;
     }
 
@@ -206,7 +206,6 @@ void pico_dev_attach(struct net_device *netdev)
         pico_string_to_ipv4("255.255.255.0", &pico_test_mask.addr);
         pico_ipv4_link_add(&pico_linux_dev->dev, pico_test_addr, pico_test_mask);
     }
-    spin_unlock(&picotcp_spin);
 
 }
 
@@ -225,28 +224,13 @@ int __init picotcp_init(void)
     if (pico_stack_init() < 0)
         panic("Unable to start picoTCP\n");
     pico_bsd_init();
-    pico_stack_is_ready++;
     picotcp_workqueue = create_singlethread_workqueue("picotcp_tick");
     INIT_DELAYED_WORK(&picotcp_work, picotcp_tick);
     printk("PicoTCP created.\n");
     queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
+    pico_stack_is_ready++;
     return 0;
 }
 fs_initcall(picotcp_init);
 
-/* AF_INET SOCKET INTERFACE (WIP) */
-
-static int picotcp_create(struct net *net, struct socket *sock, int protocol, int kern)
-{
-    return 0;
-}
-
-
-static const struct net_proto_family picotcp_family_ops = {
-  .family = PF_INET,
-  .create = picotcp_create,
-  .owner  = THIS_MODULE,
-};
-
-MODULE_ALIAS_NETPROTO(PF_INET);
 #pragma GCC pop_options

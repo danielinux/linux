@@ -216,10 +216,6 @@ struct sock_common {
 };
 
 struct cg_proto;
-#ifdef CONFIG_PICOTCP
-struct pico_socket;
-#define sk_pico(sk) (sk->sk_pico)
-#endif
 /**
   *	struct sock - network layer representation of sockets
   *	@__sk_common: shared layout with inet_timewait_sock
@@ -430,9 +426,6 @@ struct sock {
 	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
-#ifdef CONFIG_PICOTCP
-    struct pico_socket *sk_pico;
-#endif
 };
 
 
