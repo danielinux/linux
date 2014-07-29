@@ -198,15 +198,6 @@ void pico_dev_attach(struct net_device *netdev)
       dev_set_mtu(netdev, 1500);
 */
 
-    /* TEST: Eth0 has hardcoded ip address */
-    if (strcmp(netdev->name, "eth0") == 0) {
-        struct pico_ip4 pico_test_addr;
-        struct pico_ip4 pico_test_mask;
-        pico_string_to_ipv4("10.99.0.6", &pico_test_addr.addr);
-        pico_string_to_ipv4("255.255.255.0", &pico_test_mask.addr);
-        pico_ipv4_link_add(&pico_linux_dev->dev, pico_test_addr, pico_test_mask);
-    }
-
 }
 
 static void picotcp_tick(struct work_struct *unused)
