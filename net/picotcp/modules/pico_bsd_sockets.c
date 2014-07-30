@@ -14,13 +14,6 @@ Author: Maxime Vincent, Andrei Carp, Daniele Lacamera
 #include "pico_sntp_client.h"
 #include "linux/kthread.h"
 
-#define SOCK_OPEN                   0
-#define SOCK_BOUND                  1
-#define SOCK_LISTEN                 2
-#define SOCK_CONNECTED              3
-#define SOCK_ERROR                  4
-#define SOCK_RESET_BY_PEER          5
-#define SOCK_CLOSED                 100
 
 #define bsd_dbg(...) do {} while(0)
 
@@ -67,7 +60,7 @@ static uint16_t pico_bsd_wait(struct pico_bsd_endpoint * ep, int read, int write
 static void pico_socket_event(uint16_t ev, struct pico_socket *s);
 
 /* pico stack lock */
-static void * picoLock = NULL;
+void * picoLock = NULL;
 
 /************************/
 /* Public API functions */

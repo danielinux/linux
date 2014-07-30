@@ -125,56 +125,9 @@ struct hostent {
 };
 #define h_addr h_addr_list[0] /* for backward compatibility */
 
+#endif /* __KERNEL__ */
 
-/* Not socket related */
-#if !defined __time_t_defined && !defined __KERNEL__
-typedef pico_time time_t;
-#define __time_t_defined
-#endif
-#if !defined _TIME_H && !defined _TIMEVAL_DEFINED && !defined _STRUCT_TIMEVAL && !defined __KERNEL__
-struct timeval {
-    time_t tv_sec;
-    time_t tv_usec;
-};
-
-struct timezone {
-    int tz_minuteswest;     /* minutes west of Greenwich */
-    int tz_dsttime;         /* type of DST correction */
-};
-#define _TIMEVAL_DEFINED
-#endif
-#endif
-
-#ifndef F_GETFL
-# define F_GETFL 3
-#endif
-
-#ifndef F_SETFL
-# define F_SETFL 4
-#endif
-
-#ifndef O_NONBLOCK
-# define O_NONBLOCK  00004000
-#endif
-
-
-int pico_newsocket(int domain, int type, int proto);
-int pico_bind(int sd, struct sockaddr * local_addr, socklen_t socklen);
-int pico_listen(int sd, int backlog);
-int pico_connect(int sd, struct sockaddr *_saddr, socklen_t socklen);
-int pico_accept(int sd, struct sockaddr *_orig, socklen_t *socklen);
-int pico_sendto(int sd, void * buf, int len, int flags, struct sockaddr *_dst, socklen_t socklen);
-int pico_recvfrom(int sd, void * buf, int len, int flags, struct sockaddr *_addr, socklen_t *socklen);
-int pico_write(int sd, void * buf, int len);
-int pico_send(int sd, void * buf, int len, int flags);
-int pico_read(int sd, void * buf, int len);
-int pico_recv(int sd, void * buf, int len, int flags);
-int pico_close(int sd);
-int pico_shutdown(int sd, int how);
-int pico_getsockname(int sd, struct sockaddr * local_addr, socklen_t *socklen);
-int pico_bsd_check_events(int sd, uint16_t events, uint16_t *revents);
-
-#ifdef PICO_SUPPORT_DNS_CLIENT
+#ifdef CONFIG_PICOTCP_DNS_CLIENT
 struct hostent *pico_gethostbyname(const char *name);
 
 /* getaddrinfo */
@@ -185,48 +138,10 @@ int pico_getaddrinfo(const char *node, const char *service,
 void pico_freeaddrinfo(struct addrinfo *res);
 #endif
 
-int pico_setsockopt          (int sockfd, int level, int optname, const void *optval, socklen_t optlen); 
-int pico_getsockopt          (int sockfd, int level, int optname, void *optval, socklen_t *optlen);
-
-#ifdef VERY_COOL
-int pico_select              (int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
-int pico_poll                (struct pollfd *pfd, nfds_t npfd, int timeout);
-int pico_ppoll               (struct pollfd *pfd, nfds_t npfd, const struct timespec *timeout_ts, const sigset_t *sigmask);
-int pico_pselect             (int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, const struct timespec *timeout, 
-                                    const sigset_t *sigmask);
-#endif
-
-#ifdef PICO_SUPPORT_SNTP_CLIENT
-int pico_gettimeofday(struct timeval *tv, struct timezone *tz);
-#endif
 
 /* Non-POSIX */
 void                         pico_bsd_init(void);
 void                         pico_bsd_deinit(void);
 void                         pico_bsd_stack_tick(void);
-uint16_t                     pico_bsd_select(struct pico_bsd_endpoint *ep);
-
-#ifdef REPLACE_STDCALLS
-#  define socket pico_newsocket
-#  define bind pico_bind
-#  define listen pico_listen
-#  define connect pico_connect
-#  define accept pico_accept
-#  define sendto pico_sendto
-#  define recvfrom pico_recvfrom
-#  define write pico_write
-#  define read pico_read
-#  define send pico_send
-#  define recv pico_recv
-#  define close pico_close
-#  define shutdown pico_shutdown
-#  define getsockname pico_getsockname
-#  define setsockopt pico_setsockopt
-#  define getsockopt pico_getsockopt
-#  define gettimeofday pico_gettimeofday
-#  define gethostbyname pico_gethostbyname
-#  define getaddrinfo pico_getaddrinfo
-#  define freeaddrinfo pico_freeaddrinfo
-#endif
 
 #endif /* PICO_BSD_SOCKETS_H_ */
