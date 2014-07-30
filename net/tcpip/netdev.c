@@ -9,7 +9,6 @@
 #include "pico_device.h"
 #include "pico_stack.h"
 #include "pico_ipv4.h"
-#include "pico_bsd_sockets.h"
 #include "linux/netdevice.h"
 #include "linux/kthread.h"
 #include <linux/err.h>
@@ -32,6 +31,7 @@
 #include <linux/poll.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <picotcp.h>
 
 #include <asm/uaccess.h>
 
@@ -40,15 +40,11 @@
 
 #include <net/sock.h>
 
-volatile int pico_stack_is_ready;
-#define PICOTCP_INTERVAL (2)
+extern volatile int pico_stack_is_ready;
 
 #pragma GCC push_options
 #pragma GCC optimize("O0")
 
-
-static struct workqueue_struct *picotcp_workqueue;
-static struct delayed_work picotcp_work;
 
 
 /* Device related */
@@ -193,35 +189,8 @@ void pico_dev_attach(struct net_device *netdev)
     dbg("Device %s created.\n", pico_linux_dev->dev.name);
     netdev->picodev = &pico_linux_dev->dev;
 
-/* 
-    if (netdev->netdev_ops)
-      dev_set_mtu(netdev, 1500);
-*/
 
 }
 
-static void picotcp_tick(struct work_struct *unused)
-{
-    (void)unused;
-    if (pico_stack_is_ready) {
-        pico_bsd_stack_tick();
-    }
-    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
-}
-
-/* Stack Init Functions */
-int __init picotcp_init(void)
-{
-    if (pico_stack_init() < 0)
-        panic("Unable to start picoTCP\n");
-    pico_bsd_init();
-    picotcp_workqueue = create_singlethread_workqueue("picotcp_tick");
-    INIT_DELAYED_WORK(&picotcp_work, picotcp_tick);
-    printk("PicoTCP created.\n");
-    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
-    pico_stack_is_ready++;
-    return 0;
-}
-fs_initcall(picotcp_init);
 
 #pragma GCC pop_options

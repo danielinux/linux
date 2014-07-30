@@ -4,60 +4,14 @@ See LICENSE and COPYING for usage.
 Do not redistribute without a written permission by the Copyright
 holders.
 
-Author: Maxime Vincent, Andrei Carp, Daniele Lacamera
+Author: Daniele Lacamera
 *********************************************************************/
 
 #include "pico_defines.h"
 #include "pico_config.h"    /* for zalloc and free */
-#include "pico_bsd_sockets.h"
-#include "pico_osal.h"
 #include "pico_sntp_client.h"
 #include "linux/kthread.h"
-
-
-#define bsd_dbg(...) do {} while(0)
-
-struct pico_bsd_endpoint {
-  struct   pico_socket *s;
-  int      socket_fd;
-  int      posix_fd;        /* TODO: ifdef... */
-  uint8_t  in_use;
-  uint8_t  state;           /* for pico_state */
-  uint8_t  nonblocking;     /* The non-blocking flag, for non-blocking socket operations */
-  uint16_t events;          /* events that we filter for */
-  uint16_t revents;         /* received events */
-  uint16_t proto;
-  void *   mutex_lock;      /* mutex for clearing revents */
-  void *   signal;          /* signals new events */
-  uint32_t timeout;         /* this is used for timeout sockets */
-};
-
-void * event_semaphore;
-
-/* MACRO's */
-#define VALIDATE_NULL(param) \
-    if(!param) \
-    { \
-        return -1; \
-    }
-
-#define VALIDATE_ONE(param,value) \
-    if(param != value) { \
-        pico_err = PICO_ERR_EINVAL; \
-        return -1; \
-    }
-
-#define VALIDATE_TWO(param,value1,value2) \
-    if(param != value1 && param != value2) { \
-        pico_err = PICO_ERR_EINVAL; \
-        return -1; \
-    }
-
-
-/* Private function prototypes */
-static void pico_event_clear(struct pico_bsd_endpoint *ep, uint16_t events);
-static uint16_t pico_bsd_wait(struct pico_bsd_endpoint * ep, int read, int write, int close);
-static void pico_socket_event(uint16_t ev, struct pico_socket *s);
+#include <picotcp.h>
 
 /* pico stack lock */
 void * picoLock = NULL;
@@ -82,21 +36,6 @@ void pico_bsd_stack_tick(void)
     pico_stack_tick();
     pico_mutex_unlock(picoLock);
 }
-
-/** Declarations of helper functions **/
-static struct pico_bsd_endpoint *pico_bsd_create_socket(void);
-static int get_free_sd(struct pico_bsd_endpoint *ep);
-static int new_sd(struct pico_bsd_endpoint *ep);
-static void free_up_ep(struct pico_bsd_endpoint *ep);
-static struct pico_bsd_endpoint *get_endpoint(int sd);
-static int bsd_to_pico_addr(union pico_address *addr, struct sockaddr *_saddr, socklen_t socklen);
-static uint16_t bsd_to_pico_port(struct sockaddr *_saddr, socklen_t socklen);
-static int pico_addr_to_bsd(struct sockaddr *_saddr, socklen_t socklen, union pico_address *addr, uint16_t net);
-static int pico_port_to_bsd(struct sockaddr *_saddr, socklen_t socklen, uint16_t port);
-
-/** Global Sockets descriptors array **/
-static struct pico_bsd_endpoint **PicoSockets       = NULL;
-static int                        PicoSocket_max    = 0;
 
 /*** Public socket functions ***/
 #if 0
@@ -389,7 +328,6 @@ int pico_sendto(struct socket *sock, void * buf, int len, int flags, struct sock
         }
         tot_len += retval;
     }
-    pico_signal_send(event_semaphore);
     return tot_len;
 }
 
@@ -450,7 +388,6 @@ int pico_recvfrom(struct socket *sock, void * _buf, int len, int flags, struct s
             pico_event_clear(ep, PICO_SOCK_EV_RD);
             if (tot_len > 0) {
                 bsd_dbg("Recvfrom returning %d\n", tot_len);
-                pico_signal_send(event_semaphore);
                 return tot_len;
             }
         }
@@ -470,7 +407,6 @@ int pico_recvfrom(struct socket *sock, void * _buf, int len, int flags, struct s
                     pico_port_to_bsd(_addr, *socklen, port);
                 }
                 /* If in a recvfrom call, for UDP we should return immediately after the first dgram */
-                pico_signal_send(event_semaphore);
                 return retval + tot_len; 
             } else {
                 /* TCP: continue until recvfrom = 0, socket buffer empty */
@@ -499,7 +435,6 @@ int pico_recvfrom(struct socket *sock, void * _buf, int len, int flags, struct s
     }
     pico_event_clear(ep, PICO_SOCK_EV_RD);
     bsd_dbg("Recvfrom returning %d (full block)\n", tot_len);
-    pico_signal_send(event_semaphore);
     return tot_len;
 }
 
@@ -550,65 +485,6 @@ int pico_shutdown(struct socket *sock, int how)
         pico_mutex_lock(picoLock);
         pico_socket_shutdown(ep->s, how);
         pico_mutex_unlock(picoLock);
-    }
-    return 0;
-}
-
-/*** Helper functions ***/
-static int bsd_to_pico_addr(union pico_address *addr, struct sockaddr *_saddr, socklen_t socklen)
-{
-    VALIDATE_TWO(socklen, SOCKSIZE, SOCKSIZE6);
-    if (socklen == SOCKSIZE6) {
-        struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)_saddr;
-        memcpy(&addr->ip6.addr, &saddr->sin6_addr.s6_addr, 16);
-        saddr->sin6_family = AF_INET6;
-    } else {
-        struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
-        addr->ip4.addr = saddr->sin_addr.s_addr;
-        saddr->sin_family = AF_INET;
-    }
-    return 0;
-}
-
-static uint16_t bsd_to_pico_port(struct sockaddr *_saddr, socklen_t socklen)
-{
-    VALIDATE_TWO(socklen, SOCKSIZE, SOCKSIZE6);
-    if (socklen == SOCKSIZE6) {
-        struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)_saddr;
-        return saddr->sin6_port;
-    } else {
-        struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
-        return saddr->sin_port;
-    }
-}
-
-static int pico_port_to_bsd(struct sockaddr *_saddr, socklen_t socklen, uint16_t port)
-{
-    VALIDATE_TWO(socklen, SOCKSIZE, SOCKSIZE6);
-    if (socklen == SOCKSIZE6) {
-        struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)_saddr;
-        saddr->sin6_port = port;
-        return 0;
-    } else {
-        struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
-        saddr->sin_port = port;
-        return 0;
-    }
-    pico_err = PICO_ERR_EINVAL;
-    return -1;
-}
-
-static int pico_addr_to_bsd(struct sockaddr *_saddr, socklen_t socklen, union pico_address *addr, uint16_t net)
-{
-    VALIDATE_TWO(socklen, SOCKSIZE, SOCKSIZE6);
-    if ((socklen == SOCKSIZE6) && (net == PICO_PROTO_IPV6)) {
-        struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)_saddr;
-        memcpy(&saddr->sin6_addr.s6_addr, &addr->ip6.addr, 16);
-        saddr->sin6_family = AF_INET6;
-    } else if ((socklen == SOCKSIZE) && (net == PICO_PROTO_IPV4)) {
-        struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
-        saddr->sin_addr.s_addr = addr->ip4.addr;
-        saddr->sin_family = AF_INET;
     }
     return 0;
 }

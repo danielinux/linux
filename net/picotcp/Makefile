@@ -9,10 +9,7 @@ obj-y     := stack/pico_device.o \
 			stack/pico_socket.o \
 			stack/pico_socket_multicast.o \
 			stack/pico_stack.o \
-			stack/pico_tree.o \
-			modules/pico_linux.o \
-			modules/pico_osal_linux.o \
-			modules/pico_bsd_sockets.o
+			stack/pico_tree.o 
 
 obj-$(CONFIG_PICOTCP_IPV4) += modules/pico_ipv4.o modules/pico_ipfilter.o
 obj-$(CONFIG_PICOTCP_IPV6) += modules/pico_ipv6.o modules/pico_icmp6.o modules/pico_ipv6_nd.o

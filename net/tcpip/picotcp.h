@@ -7,6 +7,7 @@ holders.
 Author: Andrei Carp, Maxime Vincent
 *********************************************************************/
 #include "pico_defines.h"
+#include <linux/types.h>
 #include "pico_constants.h"
 #include "pico_config.h"
 #include "pico_stack.h"
@@ -16,12 +17,36 @@ Author: Andrei Carp, Maxime Vincent
 #include "pico_ipv6.h"
 #include "pico_dns_client.h"
 #include "pico_socket.h"
+#include "pico_device.h"
+#include "pico_stack.h"
+#include "pico_tree.h"
+#include "pico_socket.h"
+#include <linux/mutex.h>
+#include <linux/types.h>
+#include <linux/socket.h>
+#include <linux/kthread.h>
+#include <linux/module.h>
+#include <linux/wait.h>
+#include <net/ip.h>
+#include <net/protocol.h>
+#include <uapi/linux/if_arp.h>
+#include <linux/socket.h>
 
 #ifndef PICO_BSD_SOCKETS_H_
 #define PICO_BSD_SOCKETS_H_
 #define SOCKSIZE  16
 #define SOCKSIZE6 28
-struct pico_bsd_endpoint;
+
+#define PICOTCP_INTERVAL (2)
+extern wait_queue_head_t picotcp_stack_init_wait;
+
+#define PICO_WAIT_INIT() \
+  DEFINE_WAIT(wait); \
+  prepare_to_wait(&picotcp_stack_init_wait, &wait, TASK_INTERRUPTIBLE); \
+  while (!pico_stack_is_ready) \
+    schedule(); \
+  finish_wait(&picotcp_stack_init_wait, &wait);
+
 
 #if defined STDSOCKET || defined __socklen_t_defined
 #include "sys/types.h"
@@ -143,5 +168,31 @@ void pico_freeaddrinfo(struct addrinfo *res);
 void                         pico_bsd_init(void);
 void                         pico_bsd_deinit(void);
 void                         pico_bsd_stack_tick(void);
+
+/*****************************************************************************
+ * Public types/enumerations/variables
+ ****************************************************************************/
+
+/* Queue implementation API is: */
+
+void * pico_mutex_init(void);
+void pico_mutex_deinit(void * mutex);
+void pico_mutex_lock(void * mutex);
+int pico_mutex_lock_timeout(void * mutex, int timeout);
+void pico_mutex_unlock(void * mutex);
+void pico_mutex_unlock_ISR(void * mutex);
+
+void * pico_signal_init(void);
+void pico_signal_deinit(void * signal);
+void pico_signal_wait(void * signal);
+int pico_signal_wait_timeout(void * signal, int timeout);
+void pico_signal_send(void * signal);
+void pico_signal_send_ISR(void * signal);
+
+/* ioctl.c */
+int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg);
+
+/* af_inet.c */
+int af_inet_picotcp_init(void);
 
 #endif /* PICO_BSD_SOCKETS_H_ */
