@@ -335,11 +335,15 @@ static int picotcp_bind(struct socket *sock, struct sockaddr *local_addr, int so
     return 0;
 }
 
-static struct picotcp_sock *picotcp_sock_new(struct net *net, int protocol)
+static struct picotcp_sock *picotcp_sock_new(struct sock *parent, struct net *net, int protocol)
 {
   struct picotcp_sock *psk;
   struct sock *sk;
-  sk = sk_alloc(net, PF_INET, GFP_KERNEL, &picotcp_proto);
+
+  if (!parent)
+    sk = sk_alloc(net, PF_INET, GFP_ATOMIC, &picotcp_proto);
+  else
+    sk = sk_clone_lock(parent, GFP_ATOMIC);
   if (!sk) {
     return NULL;
   }
@@ -425,7 +429,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
             return  0 - pico_err;
         }
         pico_event_clear(psk, PICO_SOCK_EV_CONN); /* clear the CONN event the listening socket */
-        newpsk = picotcp_sock_new(psk->net, psk->proto);
+        newpsk = picotcp_sock_new(&psk->sk, psk->net, psk->proto);
         if (!psk) {
           pico_mutex_unlock(picoLock);
           pico_socket_close(ps);
@@ -438,20 +442,10 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
         newpsk->sk.sk_state = TCP_ESTABLISHED;
         newpsk->pico = ps;
         ps->priv = newsock;
-
-        /* Use this to copy the origin address if needed 
-        if (newpsk->pico->net->proto_number == PICO_PROTO_IPV4)
-            *socklen = SOCKSIZE;
-        else
-            *socklen = SOCKSIZE6;
-        if (pico_addr_to_bsd(_orig, *socklen, &picoaddr, newpsk->s->net->proto_number) < 0) {
-            pico_mutex_unlock(picoLock);
-            return -1;
-        }
-        pico_port_to_bsd(_orig, *socklen, port);
-        */
         newpsk->in_use = 1;
+        sock_graft(&newpsk->sk, newsock);
         pico_mutex_unlock(picoLock);
+        printk("ACCEPT: SUCCESS!\n");
         return 0;
     }
     return -EAGAIN;
@@ -477,6 +471,157 @@ static int picotcp_listen(struct socket *sock, int backlog)
   return 0;
 }
 
+static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
+             struct msghdr *msg, size_t len)
+{
+    struct picotcp_sock *psk = picotcp_sock(sock);
+    struct sock_iocb *siocb = kiocb_to_siocb(cb);
+    struct scm_cookie tmp_scm;
+    int tot_len = 0, err;
+    union pico_address _addr, *addr = NULL;
+    uint16_t port = 0;
+    uint8_t *kbuf;
+
+    printk("Called picotcp_sendmsg\n");
+
+    if (len <= 0)
+      return -EINVAL;
+
+    if (!siocb->scm) {
+      siocb->scm= &tmp_scm;
+      memset(&tmp_scm, 0, sizeof(tmp_scm));
+    }
+
+    kbuf = kmalloc(len, GFP_ATOMIC);
+    if (!kbuf)
+      return -ENOMEM;
+
+    err = scm_send(sock, msg, siocb->scm, false);
+    if (err < 0)
+      return err;
+
+    if (msg->msg_namelen) {
+      bsd_to_pico_addr(&_addr, msg->msg_name, msg->msg_namelen);
+      port = bsd_to_pico_port(msg->msg_name, msg->msg_namelen);
+      addr = &_addr;
+      printk("Address is copied\n");
+    }
+
+    memcpy_fromiovec(kbuf, msg->msg_iov, len);
+
+
+    while (tot_len < len) {
+      int r;
+      psk_lock(psk);
+      r = pico_socket_sendto(psk->pico, kbuf, len, &addr, port);
+      psk_unlock(psk);
+      printk("> sendto returned %d - expected len is %d\n", r, len);
+      if (r < 0) {
+        kfree(kbuf);
+        return 0 - pico_err;
+      }
+
+      tot_len += r;
+
+      pico_event_clear(psk, PICO_SOCK_EV_WR);
+      if ((tot_len > 0) && psk->proto == PICO_PROTO_UDP)
+          break;
+
+      if (tot_len < len) {
+        uint16_t ev = 0;
+        ev = pico_bsd_wait(psk, 0, 1, 1);
+        if ((ev & (PICO_SOCK_EV_ERR | PICO_SOCK_EV_FIN | PICO_SOCK_EV_CLOSE)) || (ev == 0)) {
+            pico_event_clear(psk, PICO_SOCK_EV_WR);
+            pico_event_clear(psk, PICO_SOCK_EV_ERR);
+            kfree(kbuf);
+            return -EINTR;
+        }
+      }
+    }
+
+    printk("About to return from sendmsg. tot_len is %d\n", tot_len);
+    kfree(kbuf);
+    return tot_len;
+}
+
+#pragma GCC push_options
+static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
+             struct msghdr *msg, size_t len, int flags)
+{
+    struct picotcp_sock *psk = picotcp_sock(sock);
+    struct sock_iocb *siocb = kiocb_to_siocb(cb);
+    struct sock *sk = sock->sk;
+    struct scm_cookie tmp_scm;
+    int tot_len = 0, skip;
+    uint8_t *kbuf;
+    union pico_address addr;
+    uint16_t port;
+    printk("Called picotcp_recvmsg\n");
+    skip = sk_peek_offset(sk, flags);
+
+    if ((len - skip) < 1)
+      return -EINVAL;
+
+    kbuf = kmalloc(len, GFP_ATOMIC);
+    if (!kbuf)
+      return -ENOMEM;
+
+    while (tot_len < len - skip) {
+      int r;
+      psk_lock(psk);
+      r = pico_socket_recvfrom(psk->pico, kbuf, len - skip, &addr, &port);
+      psk_unlock(psk);
+      printk("> recvfrom returned %d - expected len is %d skip is %d\n", r, len - skip, skip);
+      if (r < 0) {
+        kfree(kbuf);
+        return 0 - pico_err;
+      }
+
+      tot_len += r;
+
+      if (r == 0) {
+        pico_event_clear(psk, PICO_SOCK_EV_RD);
+        pico_event_clear(psk, PICO_SOCK_EV_ERR);
+        if (tot_len > 0) {
+          printk("recvfrom returning %d\n", tot_len);
+          goto recv_success;
+        }
+      }
+      if ((tot_len > 0) && psk->proto == PICO_PROTO_UDP)
+        goto recv_success;
+
+      if (tot_len < (len - skip)) {
+        uint16_t ev = 0;
+        ev = pico_bsd_wait(psk, 1, 0, 1);
+        if ((ev & (PICO_SOCK_EV_ERR | PICO_SOCK_EV_FIN | PICO_SOCK_EV_CLOSE)) || (ev == 0)) {
+            pico_event_clear(psk, PICO_SOCK_EV_RD);
+            pico_event_clear(psk, PICO_SOCK_EV_ERR);
+            kfree(kbuf);
+            return -EINTR;
+        }
+      }
+    }
+
+recv_success:
+    printk("About to return from recvmsg. tot_len is %d\n", tot_len);
+    if (msg->msg_name) {
+      pico_addr_to_bsd(msg->msg_name, msg->msg_namelen, &addr, PICO_PROTO_IPV4);
+      pico_port_to_bsd(msg->msg_name, msg->msg_namelen, port);
+      printk("Address is copied\n");
+    }
+    if (memcpy_toiovec(msg->msg_iov, kbuf + skip, tot_len))
+      return -EFAULT;
+
+    kfree(kbuf);
+    if (!siocb->scm) {
+      siocb->scm= &tmp_scm;
+      memset(&tmp_scm, 0, sizeof(tmp_scm));
+    }
+    scm_recv(sock, msg, siocb->scm, flags);
+    printk("Returning from recvmsg\n");
+    return tot_len;
+}
+
 static int picotcp_shutdown(struct socket *sock, int how)
 {
     struct picotcp_sock *psk = picotcp_sock(sock);
@@ -498,7 +643,9 @@ static int picotcp_release(struct socket *sock)
     return -EINVAL;
   printk("Called picotcp_release()\n");
   pico_mutex_lock(picoLock);
+  psk_lock(psk);
   pico_socket_close(psk->pico);
+  psk_unlock(psk);
   pico_mutex_unlock(picoLock);
   mutex_destroy(psk->mutex_lock);
   sock_orphan(sock->sk);
@@ -523,16 +670,12 @@ const struct proto_ops picotcp_proto_ops = {
 
 	.mmap		     = sock_no_mmap,
 	.socketpair	 = sock_no_socketpair,
+  .sendpage    = sock_no_sendpage,
+
 	.setsockopt	 = sock_common_setsockopt,
 	.getsockopt	 = sock_common_getsockopt,
-#if 0
-	.getname	   = pico_getname,
-	.listen		   = pico_listen,
-	.sendmsg	   = pico_sendto,
-	.recvmsg	   = pico_recvfrom,
-	.sendpage	   = pico_sendpage,
-	.splice_read = tcp_splice_read,
-#endif
+	.sendmsg	   = picotcp_sendmsg,
+	.recvmsg	   = picotcp_recvmsg,
 };
 EXPORT_SYMBOL(picotcp_proto_ops);
 
@@ -552,14 +695,17 @@ static int picotcp_create(struct net *net, struct socket *sock, int protocol, in
   printk("Selected protocol: %d\n", protocol);
 
   /* Convert IP sockets into DGRAM, so ioctl are still possible (e.g.: ifconfig) */
-  if (protocol == IPPROTO_IP)
+  if (sock->type == SOCK_DGRAM)
     protocol = IPPROTO_UDP;
+  else
+    protocol = IPPROTO_TCP;
+
 
   ps = pico_socket_open(PICO_PROTO_IPV4, protocol, picotcp_socket_event);
   if (!ps) 
     return 0 - pico_err;
 
-  psk = picotcp_sock_new(net, protocol);
+  psk = picotcp_sock_new(NULL, net, protocol);
   if (!psk)
     return -ENOMEM;
   sock_init_data(sock, &psk->sk);
@@ -610,4 +756,3 @@ static void __exit af_inet_picotcp_exit(void)
 
 
 MODULE_ALIAS_NETPROTO(PF_INET);
-
