@@ -385,6 +385,7 @@ static int picotcp_getname(struct socket *sock, struct sockaddr * local_addr, in
         return -1;
     }
     pico_port_to_bsd(local_addr, *socklen, port);
+    pico_mutex_unlock(picoLock);
     return 0;
 }
 
