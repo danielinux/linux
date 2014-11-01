@@ -513,7 +513,10 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
     while (tot_len < len) {
       int r;
       psk_lock(psk);
-      r = pico_socket_sendto(psk->pico, kbuf, len, &addr, port);
+      if (msg->msg_namelen > 0)
+        r = pico_socket_sendto(psk->pico, kbuf, len, &addr, port);
+      else
+        r = pico_socket_send(psk->pico, kbuf, len);
       psk_unlock(psk);
       printk("> sendto returned %d - expected len is %d\n", r, len);
       if (r < 0) {
@@ -544,7 +547,6 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
     return tot_len;
 }
 
-#pragma GCC push_options
 static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
              struct msghdr *msg, size_t len, int flags)
 {
