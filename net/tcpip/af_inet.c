@@ -304,6 +304,7 @@ static int picotcp_connect(struct socket *sock, struct sockaddr *_saddr, int soc
       return 0;
   } else {
       pico_socket_close(psk->pico);
+      psk->in_use = 0;
   }
   return -EINTR;
 }
@@ -533,7 +534,7 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
       if (tot_len < len) {
         uint16_t ev = 0;
         ev = pico_bsd_wait(psk, 0, 1, 1);
-        if ((ev & (PICO_SOCK_EV_ERR | PICO_SOCK_EV_FIN | PICO_SOCK_EV_CLOSE)) || (ev == 0)) {
+        if ((ev & (PICO_SOCK_EV_ERR | PICO_SOCK_EV_FIN)) || (ev == 0)) {
             pico_event_clear(psk, PICO_SOCK_EV_WR);
             pico_event_clear(psk, PICO_SOCK_EV_ERR);
             kfree(kbuf);
@@ -628,6 +629,8 @@ static int picotcp_shutdown(struct socket *sock, int how)
 {
     struct picotcp_sock *psk = picotcp_sock(sock);
     printk("Called picotcp_shutdown\n");
+    how++; /* ... see ipv4/af_inet.c */
+
     if(psk->pico) /* valid socket, try to close it */
     {
         pico_mutex_lock(picoLock);
@@ -647,6 +650,7 @@ static int picotcp_release(struct socket *sock)
   pico_mutex_lock(picoLock);
   psk_lock(psk);
   pico_socket_close(psk->pico);
+  psk->in_use = 0;
   psk_unlock(psk);
   pico_mutex_unlock(picoLock);
   mutex_destroy(psk->mutex_lock);
