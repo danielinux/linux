@@ -432,7 +432,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
         }
         pico_event_clear(psk, PICO_SOCK_EV_CONN); /* clear the CONN event the listening socket */
         newpsk = picotcp_sock_new(&psk->sk, psk->net, psk->proto);
-        if (!psk) {
+        if (!newpsk) {
           pico_mutex_unlock(picoLock);
           pico_socket_close(ps);
           return -ENOMEM;
@@ -443,7 +443,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
         newpsk->state = SOCK_CONNECTED;
         newpsk->sk.sk_state = TCP_ESTABLISHED;
         newpsk->pico = ps;
-        ps->priv = newsock;
+        ps->priv = newpsk;
         newpsk->in_use = 1;
         sock_graft(&newpsk->sk, newsock);
         pico_mutex_unlock(picoLock);
