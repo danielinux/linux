@@ -274,6 +274,35 @@ static int picotcp_gifconf(struct socket *sock, unsigned int cmd, unsigned long 
   return 0;
 }
 
+static int picotcp_addroute(struct socket *sock, unsigned int cmd, unsigned long arg)
+{
+  struct rtentry *rte = (struct rtentry *)arg;
+  struct pico_ip4 a, g, n;
+  struct pico_device *dev = NULL;
+  struct pico_ipv4_link *link = NULL;
+  int flags = 1;
+
+  /*
+  dev = pico_get_device((char *)rte->rt_dev);
+  if (dev)
+    link = pico_ipv4_link_by_dev(dev);
+  */
+
+  memcpy(&a, &((struct sockaddr_in *)(&rte->rt_dst))->sin_addr.s_addr, sizeof(struct pico_ip4));
+  memcpy(&g, &((struct sockaddr_in *)(&rte->rt_gateway))->sin_addr.s_addr, sizeof(struct pico_ip4));
+  memcpy(&n, &((struct sockaddr_in *)(&rte->rt_genmask))->sin_addr.s_addr, sizeof(struct pico_ip4));
+  a.addr &= n.addr;
+
+  if (n.addr == 0)
+      flags +=2;
+
+  /* TODO: link from device name in rt_dev (u32-> *char) */
+
+  if (pico_ipv4_route_add(a, n, g, rte->rt_metric, link) < 0)
+    return -pico_err;
+  return 0;
+}
+
 
 int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
@@ -340,6 +369,9 @@ int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
       break;
     case SIOCSIFFLAGS:
       err = picotcp_iosgflags(sock, cmd, arg, 1);
+      break;
+    case SIOCADDRT:
+      err = picotcp_addroute(sock, cmd, arg);
       break;
 
     default:

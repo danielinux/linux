@@ -7,5 +7,6 @@ obj-y     := af_inet.o \
 			netdev.o \
 			sock.o \
 			ioctl.o \
+			proc.o \
 			core.o
 

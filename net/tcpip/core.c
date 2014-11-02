@@ -10,6 +10,7 @@ static struct workqueue_struct *picotcp_workqueue;
 static struct delayed_work picotcp_work;
 wait_queue_head_t picotcp_stack_init_wait;
 
+extern int ip_route_proc_init(void);
 
 static void picotcp_tick(struct work_struct *unused)
 {
@@ -35,6 +36,8 @@ int __init picotcp_init(void)
     wake_up_interruptible_all(&picotcp_stack_init_wait);
 
     af_inet_picotcp_init();
+    if (ip_route_proc_init() < 0)
+      printk("Failed initializing /proc/net/route\n");
     return 0;
 }
 fs_initcall(picotcp_init);
