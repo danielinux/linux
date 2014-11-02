@@ -52,7 +52,7 @@ struct pico_device *pico_loop_create(void)
     if (!loop)
         return NULL;
 
-    if( 0 != pico_device_init(loop, "loop", NULL)) {
+    if( 0 != pico_device_init(loop, "lo", NULL)) {
         dbg ("Loop init failed.\n");
         pico_device_destroy(loop);
         return NULL;

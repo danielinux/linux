@@ -1,5 +1,6 @@
 #include "pico_device.h"
 #include "pico_stack.h"
+#include "pico_dev_loop.h"
 #include <picotcp.h>
 #include <linux/types.h>
 #include <linux/socket.h>
@@ -21,6 +22,28 @@ static void picotcp_tick(struct work_struct *unused)
     queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
 }
 
+#ifdef CONFIG_PICOTCP_DEVLOOP
+static int picotcp_loopback_init(void)
+{
+    struct pico_device *lo;
+    struct pico_ip4 ipaddr, netmask;
+
+    lo = pico_loop_create();
+    if (!lo)
+      return -ENOMEM;
+    pico_string_to_ipv4("127.0.0.1", &ipaddr.addr);
+    pico_string_to_ipv4("255.0.0.0", &netmask.addr);
+    pico_ipv4_link_add(lo, ipaddr, netmask);
+
+    return 0;
+}
+#else
+static int picotcp_loopback_init(void)
+{
+    return 0;
+}
+#endif
+
 /* Stack Init Functions */
 int __init picotcp_init(void)
 {
@@ -38,6 +61,9 @@ int __init picotcp_init(void)
     af_inet_picotcp_init();
     if (ip_route_proc_init() < 0)
       printk("Failed initializing /proc/net/route\n");
+
+    if (picotcp_loopback_init() < 0)
+      printk("picoTCP: failed to initialize loopback device.\n");
     return 0;
 }
 fs_initcall(picotcp_init);
