@@ -143,7 +143,9 @@ static void picotcp_dev_attach_retry(unsigned long x)
         add_timer(&picotcp_dev_attach_retry_timer);
     } else {
         struct net_device *netdev = (struct net_device *)x;
+        rtnl_lock();
         pico_dev_attach(netdev);
+        rtnl_unlock();
     }
 }
 
