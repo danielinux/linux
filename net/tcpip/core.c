@@ -13,13 +13,15 @@ wait_queue_head_t picotcp_stack_init_wait;
 
 extern int ip_route_proc_init(void);
 
+extern int sysctl_picotcp_dutycycle;
+
 static void picotcp_tick(struct work_struct *unused)
 {
     (void)unused;
     if (pico_stack_is_ready) {
         pico_bsd_stack_tick();
     }
-    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
+    queue_delayed_work(picotcp_workqueue, &picotcp_work, sysctl_picotcp_dutycycle);
 }
 
 #ifdef CONFIG_PICOTCP_DEVLOOP
@@ -54,7 +56,7 @@ int __init picotcp_init(void)
     picotcp_workqueue = create_singlethread_workqueue("picotcp_tick");
     INIT_DELAYED_WORK(&picotcp_work, picotcp_tick);
     printk("PicoTCP created.\n");
-    queue_delayed_work(picotcp_workqueue, &picotcp_work, PICOTCP_INTERVAL);
+    queue_delayed_work(picotcp_workqueue, &picotcp_work, sysctl_picotcp_dutycycle);
     pico_stack_is_ready++;
     wake_up_interruptible_all(&picotcp_stack_init_wait);
 

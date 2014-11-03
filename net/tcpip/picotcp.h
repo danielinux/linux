@@ -37,7 +37,6 @@ Author: Andrei Carp, Maxime Vincent
 #define SOCKSIZE  16
 #define SOCKSIZE6 28
 
-#define PICOTCP_INTERVAL (2)
 extern wait_queue_head_t picotcp_stack_init_wait;
 
 #define PICO_WAIT_INIT() \

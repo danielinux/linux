@@ -18,6 +18,12 @@
 
 extern struct pico_tree Routes;
 
+static int stack_proc_show(struct seq_file *m, void *v)
+{
+  seq_printf(m,"picoTCP\n");
+  return 0;
+}
+
 static int route_proc_show(struct seq_file *m, void *v)
 {
   struct pico_ipv4_route *r;
@@ -39,6 +45,10 @@ static int route_proc_open(struct inode *inode, struct file *file)
   return single_open(file, route_proc_show, NULL);
 }
 
+static int stack_proc_open(struct inode *inode, struct file *file)
+{
+  return single_open(file, stack_proc_show, NULL);
+}
 
 static const struct file_operations route_proc_fops = {
   .owner    = THIS_MODULE,
@@ -48,18 +58,34 @@ static const struct file_operations route_proc_fops = {
   .release  = single_release,
 };
 
+static const struct file_operations stack_proc_fops = {
+  .owner    = THIS_MODULE,
+  .open   = stack_proc_open,
+  .read   = seq_read,
+  .llseek   = seq_lseek,
+  .release  = single_release,
+};
+
 static __net_init int proc_net_route_init(struct net *net)
 {
   struct proc_dir_entry *pde;
+
+  /* /proc/net/route */
   pde = proc_create("route", S_IRUGO, net->proc_net, &route_proc_fops);
   if (!pde) {
     remove_proc_entry("route", net->proc_net);
     return -1;
   }
-
   printk("picoTCP: Created /proc/net/route.\n");
-  return 0;
 
+  /* /proc/net/stack */
+  pde = proc_create("stack", S_IRUGO, net->proc_net, &stack_proc_fops);
+  if (!pde) {
+    remove_proc_entry("stack", net->proc_net);
+    return -1;
+  }
+  printk("picoTCP: Created /proc/net/stack.\n");
+  return 0;
 }
 
 static void __net_exit proc_net_route_exit(struct net *net)

@@ -41,6 +41,7 @@
 #include <net/sock.h>
 
 extern volatile int pico_stack_is_ready;
+extern int sysctl_picotcp_dutycycle;
 
 #pragma GCC push_options
 #pragma GCC optimize("O0")
@@ -137,7 +138,7 @@ void pico_dev_attach(struct net_device *netdev);
 static void picotcp_dev_attach_retry(unsigned long x)
 {
     if (!pico_stack_is_ready) {
-        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(PICOTCP_INTERVAL* 4);
+        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(sysctl_picotcp_dutycycle * 4);
         picotcp_dev_attach_retry_timer.function = picotcp_dev_attach_retry;
         picotcp_dev_attach_retry_timer.data = x;
         add_timer(&picotcp_dev_attach_retry_timer);
@@ -161,7 +162,7 @@ void pico_dev_attach(struct net_device *netdev)
     
     if (!pico_stack_is_ready) {
         init_timer(&picotcp_dev_attach_retry_timer);
-        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(PICOTCP_INTERVAL * 4);
+        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(sysctl_picotcp_dutycycle * 4);
         picotcp_dev_attach_retry_timer.function = picotcp_dev_attach_retry;
         picotcp_dev_attach_retry_timer.data = (unsigned long)netdev;
         add_timer(&picotcp_dev_attach_retry_timer);

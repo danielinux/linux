@@ -278,7 +278,6 @@ static int picotcp_addroute(struct socket *sock, unsigned int cmd, unsigned long
 {
   struct rtentry *rte = (struct rtentry *)arg;
   struct pico_ip4 a, g, n;
-  struct pico_device *dev = NULL;
   struct pico_ipv4_link *link = NULL;
   int flags = 1;
 

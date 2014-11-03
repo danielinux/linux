@@ -9,6 +9,8 @@
 #define SOCK_RESET_BY_PEER          5
 #define SOCK_CLOSED                 100
 
+#define TPROTO(psk) ((psk)->pico->proto->proto_number)
+
 extern volatile int pico_stack_is_ready;
 extern void *picoLock;
 
@@ -181,8 +183,8 @@ static unsigned int picotcp_poll(struct file *file, struct socket *sock, poll_ta
   struct picotcp_sock *psk = picotcp_sock(sock);
   struct sock *sk = sock->sk;
   unsigned int mask = 0;
-
-  sock_poll_wait(file, sk_sleep(sk), wait);
+  if ( (TPROTO(psk) != PICO_PROTO_UDP) || !(poll_requested_events(wait) & POLLOUT))
+      sock_poll_wait(file, sk_sleep(sk), wait);
 
   psk_lock(psk);
   if (sk->sk_err)
@@ -193,6 +195,11 @@ static unsigned int picotcp_poll(struct file *file, struct socket *sock, poll_ta
     mask |= POLLIN;
   if (psk->revents & PICO_SOCK_EV_WR)
     mask |= POLLOUT;
+
+  /* Addendum: UDP can always write, by default... */
+  if (TPROTO(psk) == PICO_PROTO_UDP)
+    mask |= POLLOUT;
+
   psk_unlock(psk);
 
   return mask;
@@ -287,6 +294,9 @@ static int picotcp_connect(struct socket *sock, struct sockaddr *_saddr, int soc
   if (err) {
     return 0 - pico_err;
   }
+
+  if (TPROTO(psk) == PICO_PROTO_UDP)
+    return 0;
 
   if (psk->nonblocking) {
       return -EAGAIN;
@@ -554,7 +564,6 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
 {
     struct picotcp_sock *psk = picotcp_sock(sock);
     struct sock_iocb *siocb = kiocb_to_siocb(cb);
-    struct sock *sk = sock->sk;
     struct scm_cookie tmp_scm;
     int tot_len = 0;
     uint8_t *kbuf;
@@ -698,6 +707,98 @@ static int picotcp_release(struct socket *sock)
   return 0;
 }
 
+static int optget(int lvl, int optname)
+{
+    int option = -1;
+
+    if (lvl == SOL_SOCKET) {
+      switch(optname) {
+        case SO_SNDBUF:
+          option = PICO_SOCKET_OPT_SNDBUF;
+          break;
+        case SO_RCVBUF:
+          option = PICO_SOCKET_OPT_RCVBUF;
+          break;
+      }
+    }
+    else if (lvl == IPPROTO_IP) {
+      switch(optname) {
+        case IP_MULTICAST_IF:
+          option = PICO_IP_MULTICAST_IF;
+          break;
+        case IP_MULTICAST_TTL:
+          option = PICO_IP_MULTICAST_TTL;
+          break;
+        case IP_MULTICAST_LOOP:
+          option = PICO_IP_MULTICAST_LOOP;
+          break;
+        case IP_ADD_MEMBERSHIP:
+          option = PICO_IP_ADD_MEMBERSHIP;
+          break;
+        case IP_DROP_MEMBERSHIP:
+          option = PICO_IP_DROP_MEMBERSHIP;
+          break;
+      }
+    } else if (lvl == IPPROTO_TCP) {
+      if (optname == TCP_NODELAY)
+        option = PICO_TCP_NODELAY;
+    }
+    return option;
+}
+
+static int picotcp_getsockopt(struct socket *sock, int level, int optname, char __user *optval, int __user *optlen)
+{
+    int option = optget(level, optname);
+    struct picotcp_sock *psk = picotcp_sock(sock);
+    uint8_t *val = kmalloc(*optlen, GFP_KERNEL);
+    int ret;
+    if (!psk)
+        return -EINVAL;
+
+    if (!val)
+        return -ENOMEM;
+
+    if (option < 0) 
+        return -EOPNOTSUPP;
+    psk_lock(psk);
+    ret = pico_socket_getoption(psk->pico, option, val); 
+    copy_to_user(optval, val, *optlen);
+    psk_unlock(psk);
+    kfree(val);
+    return ret;
+}
+
+static int picotcp_setsockopt(struct socket *sock, int level, int optname, char __user *optval, unsigned int optlen)
+{
+    int option = optget(level, optname);
+    struct picotcp_sock *psk = picotcp_sock(sock);
+    uint8_t *val = kmalloc(optlen, GFP_KERNEL);
+    int ret;
+    if (!psk)
+        return -EINVAL;
+
+    if (!val)
+        return -ENOMEM;
+
+    if (option < 0) 
+        return -EOPNOTSUPP;
+
+    psk_lock(psk);
+    copy_from_user(val, optval, optlen);
+    ret = pico_socket_setoption(psk->pico, option, val);
+    psk_unlock(psk);
+    kfree(val);
+    return ret;
+
+
+}
+
+
+
+
+
+
+
 
 
 const struct proto_ops picotcp_proto_ops = {
@@ -718,8 +819,8 @@ const struct proto_ops picotcp_proto_ops = {
 	.socketpair	 = sock_no_socketpair,
   .sendpage    = sock_no_sendpage,
 
-	.setsockopt	 = sock_common_setsockopt,
-	.getsockopt	 = sock_common_getsockopt,
+	.setsockopt	 = picotcp_setsockopt,
+	.getsockopt	 = picotcp_getsockopt,
 	.sendmsg	   = picotcp_sendmsg,
 	.recvmsg	   = picotcp_recvmsg,
 };
