@@ -556,26 +556,57 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
     struct sock_iocb *siocb = kiocb_to_siocb(cb);
     struct sock *sk = sock->sk;
     struct scm_cookie tmp_scm;
-    int tot_len = 0, skip;
+    int tot_len = 0;
     uint8_t *kbuf;
     union pico_address addr;
     uint16_t port;
-    printk("Called picotcp_recvmsg\n");
-    skip = sk_peek_offset(sk, flags);
 
-    if ((len - skip) < 1)
-      return -EINVAL;
+    /* Keep kbuf in case of peek */
+    static uint8_t *peeked_kbuf = NULL;
+    static uint8_t *peeked_kbuf_start = NULL;
+    static int peeked_kbuf_len = 0;
+
+    printk("Called picotcp_recvmsg\n");
+
+    if (len < 1) {
+        return -EINVAL;
+    }
 
     kbuf = kmalloc(len, GFP_ATOMIC);
     if (!kbuf)
       return -ENOMEM;
 
-    while (tot_len < len - skip) {
+    if (len < peeked_kbuf_len) {
+      memcpy(kbuf, peeked_kbuf, len);
+      tot_len += len;
+    } else {
+      memcpy(kbuf, peeked_kbuf, peeked_kbuf_len);
+      tot_len += peeked_kbuf_len;
+    }
+
+    /* If it is an actual read (i.e. no MSG_PEEK set), 
+     * consume the bytes already taken from the saved kbuf.
+     */
+    if (!(flags & MSG_PEEK)) {
+        peeked_kbuf += tot_len;
+        peeked_kbuf_len -= tot_len;
+        /* If all bytes have been consumed, get rid of the
+         * saved buffer.
+         */
+        if (peeked_kbuf_len <= 0) {
+            kfree(peeked_kbuf_start);
+            peeked_kbuf_start = peeked_kbuf = NULL;
+            peeked_kbuf_len = 0;
+        }
+    }
+
+
+    while (tot_len < len) {
       int r;
       psk_lock(psk);
-      r = pico_socket_recvfrom(psk->pico, kbuf, len - skip, &addr, &port);
+      r = pico_socket_recvfrom(psk->pico, kbuf, len - tot_len, &addr, &port);
       psk_unlock(psk);
-      printk("> recvfrom returned %d - expected len is %d skip is %d\n", r, len - skip, skip);
+      printk("> recvfrom returned %d - expected len is %d\n", r, len - tot_len);
       if (r < 0) {
         kfree(kbuf);
         return 0 - pico_err;
@@ -594,7 +625,7 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
       if ((tot_len > 0) && psk->proto == PICO_PROTO_UDP)
         goto recv_success;
 
-      if (tot_len < (len - skip)) {
+      if (tot_len < len) {
         uint16_t ev = 0;
         ev = pico_bsd_wait(psk, 1, 0, 1);
         if ((ev & (PICO_SOCK_EV_ERR | PICO_SOCK_EV_FIN | PICO_SOCK_EV_CLOSE)) || (ev == 0)) {
@@ -613,10 +644,18 @@ recv_success:
       pico_port_to_bsd(msg->msg_name, msg->msg_namelen, port);
       printk("Address is copied\n");
     }
-    if (memcpy_toiovec(msg->msg_iov, kbuf + skip, tot_len))
+    if (memcpy_toiovec(msg->msg_iov, kbuf, tot_len))
       return -EFAULT;
 
-    kfree(kbuf);
+    /* If in PEEK Mode, and no packet stored yet, 
+     * save this segment for later use.
+     */
+    if ((flags & MSG_PEEK) && (!peeked_kbuf_start)) {
+      peeked_kbuf_start = peeked_kbuf = kbuf;
+      peeked_kbuf_len = tot_len;
+    } else {
+      kfree(kbuf);
+    }
     if (!siocb->scm) {
       siocb->scm= &tmp_scm;
       memset(&tmp_scm, 0, sizeof(tmp_scm));
