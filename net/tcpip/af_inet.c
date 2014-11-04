@@ -56,6 +56,7 @@ static int bsd_to_pico_addr(union pico_address *addr, struct sockaddr *_saddr, s
         struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
         addr->ip4.addr = saddr->sin_addr.s_addr;
         saddr->sin_family = AF_INET;
+        memset(saddr->sin_zero, 0, sizeof(saddr->sin_zero));
     }
     return 0;
 }
@@ -89,16 +90,19 @@ static int pico_port_to_bsd(struct sockaddr *_saddr, socklen_t socklen, uint16_t
 
 static int pico_addr_to_bsd(struct sockaddr *_saddr, socklen_t socklen, union pico_address *addr, uint16_t net)
 {
-    if ((socklen == SOCKSIZE6) && (net == PICO_PROTO_IPV6)) {
+    if (net == PICO_PROTO_IPV6) {
         struct sockaddr_in6 *saddr = (struct sockaddr_in6 *)_saddr;
         memcpy(&saddr->sin6_addr.s6_addr, &addr->ip6.addr, 16);
         saddr->sin6_family = AF_INET6;
-    } else if ((socklen == SOCKSIZE) && (net == PICO_PROTO_IPV4)) {
+        return 0;
+    } else if (net == PICO_PROTO_IPV4) {
         struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
         saddr->sin_addr.s_addr = addr->ip4.addr;
         saddr->sin_family = AF_INET;
+        return 0;
     }
-    return 0;
+    return -1;
+
 }
 
 
@@ -108,7 +112,6 @@ struct picotcp_sock {
   struct pico_socket *pico;
   uint8_t  in_use;
   uint8_t  state;
-  uint8_t  nonblocking;     /* The non-blocking flag, for non-blocking socket operations */
   uint16_t events;          /* events that we filter for */
   volatile uint16_t revents;         /* received events */
   uint16_t proto;
@@ -183,6 +186,7 @@ static unsigned int picotcp_poll(struct file *file, struct socket *sock, poll_ta
   struct picotcp_sock *psk = picotcp_sock(sock);
   struct sock *sk = sock->sk;
   unsigned int mask = 0;
+
   if ( (TPROTO(psk) != PICO_PROTO_UDP) || !(poll_requested_events(wait) & POLLOUT))
       sock_poll_wait(file, sk_sleep(sk), wait);
 
@@ -295,10 +299,13 @@ static int picotcp_connect(struct socket *sock, struct sockaddr *_saddr, int soc
     return 0 - pico_err;
   }
 
-  if (TPROTO(psk) == PICO_PROTO_UDP)
+  if (TPROTO(psk) == PICO_PROTO_UDP) {
+    printk("UDP: Connected\n");
+    pico_event_clear(psk, PICO_SOCK_EV_CONN);
     return 0;
+  }
 
-  if (psk->nonblocking) {
+  if (flags & MSG_DONTWAIT) {
       return -EAGAIN;
   } else {
       /* wait for event */
@@ -352,16 +359,15 @@ static struct picotcp_sock *picotcp_sock_new(struct sock *parent, struct net *ne
   struct sock *sk;
 
   if (!parent)
-    sk = sk_alloc(net, PF_INET, GFP_ATOMIC, &picotcp_proto);
+    sk = sk_alloc(net, PF_INET, GFP_KERNEL, &picotcp_proto);
   else
-    sk = sk_clone_lock(parent, GFP_ATOMIC);
+    sk = sk_clone_lock(parent, GFP_KERNEL);
   if (!sk) {
     return NULL;
   }
   psk = (struct picotcp_sock *) sk;
   psk->mutex_lock = pico_mutex_init();
 
-  psk->nonblocking = 0;
   psk->net = net;
   psk->state = SOCK_OPEN;
   psk->in_use = 0;
@@ -416,8 +422,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
     }
 
     printk("Going to sleep...\n");
-
-    if (psk->nonblocking)
+    if (flags & O_NONBLOCK)
       events = PICO_SOCK_EV_CONN;
     else
       events = pico_bsd_wait(psk, 0, 0, 0);
@@ -499,12 +504,15 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
     if (len <= 0)
       return -EINVAL;
 
+    if ((TPROTO(psk) == PICO_PROTO_UDP) && (len > 65535))
+        len = 65535;
+
     if (!siocb->scm) {
       siocb->scm= &tmp_scm;
       memset(&tmp_scm, 0, sizeof(tmp_scm));
     }
 
-    kbuf = kmalloc(len, GFP_ATOMIC);
+    kbuf = kmalloc(len, GFP_KERNEL);
     if (!kbuf)
       return -ENOMEM;
 
@@ -541,6 +549,13 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
       pico_event_clear(psk, PICO_SOCK_EV_WR);
       if ((tot_len > 0) && psk->proto == PICO_PROTO_UDP)
           break;
+
+      if (msg->msg_flags & MSG_DONTWAIT) {
+        if (tot_len > 0)
+          break;
+        else
+          return -EAGAIN;
+      }
 
       if (tot_len < len) {
         uint16_t ev = 0;
@@ -581,32 +596,36 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
         return -EINVAL;
     }
 
-    kbuf = kmalloc(len, GFP_ATOMIC);
+    if ((TPROTO(psk) == PICO_PROTO_UDP) && (len > 65535))
+        len = 65535;
+
+    kbuf = kmalloc(len, GFP_KERNEL);
     if (!kbuf)
       return -ENOMEM;
+    if (peeked_kbuf) {
+            if (len < peeked_kbuf_len) {
+                    memcpy(kbuf, peeked_kbuf, len);
+                    tot_len += len;
+            } else {
+                    memcpy(kbuf, peeked_kbuf, peeked_kbuf_len);
+                    tot_len += peeked_kbuf_len;
+            }
 
-    if (len < peeked_kbuf_len) {
-      memcpy(kbuf, peeked_kbuf, len);
-      tot_len += len;
-    } else {
-      memcpy(kbuf, peeked_kbuf, peeked_kbuf_len);
-      tot_len += peeked_kbuf_len;
-    }
-
-    /* If it is an actual read (i.e. no MSG_PEEK set), 
-     * consume the bytes already taken from the saved kbuf.
-     */
-    if (!(flags & MSG_PEEK)) {
-        peeked_kbuf += tot_len;
-        peeked_kbuf_len -= tot_len;
-        /* If all bytes have been consumed, get rid of the
-         * saved buffer.
-         */
-        if (peeked_kbuf_len <= 0) {
-            kfree(peeked_kbuf_start);
-            peeked_kbuf_start = peeked_kbuf = NULL;
-            peeked_kbuf_len = 0;
-        }
+            /* If it is an actual read (i.e. no MSG_PEEK set), 
+             * consume the bytes already taken from the saved kbuf.
+             */
+            if (!(flags & MSG_PEEK)) {
+                    peeked_kbuf += tot_len;
+                    peeked_kbuf_len -= tot_len;
+                    /* If all bytes have been consumed, get rid of the
+                     * saved buffer.
+                     */
+                    if (peeked_kbuf_len <= 0) {
+                            kfree(peeked_kbuf_start);
+                            peeked_kbuf_start = peeked_kbuf = NULL;
+                            peeked_kbuf_len = 0;
+                    }
+            }
     }
 
 
@@ -631,8 +650,15 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
           goto recv_success;
         }
       }
-      if ((tot_len > 0) && psk->proto == PICO_PROTO_UDP)
+      if ((tot_len > 0) && (TPROTO(psk) == PICO_PROTO_UDP))
         goto recv_success;
+
+      if (flags & MSG_DONTWAIT) {
+        if (tot_len > 0) 
+          goto recv_success;
+        else
+          return -EAGAIN;
+      }
 
       if (tot_len < len) {
         uint16_t ev = 0;
@@ -651,7 +677,9 @@ recv_success:
     if (msg->msg_name) {
       pico_addr_to_bsd(msg->msg_name, msg->msg_namelen, &addr, PICO_PROTO_IPV4);
       pico_port_to_bsd(msg->msg_name, msg->msg_namelen, port);
-      printk("Address is copied\n");
+      msg->msg_namelen = sizeof(struct sockaddr_in);
+      printk("Address is copied to msg(%p). msg->name is at %p, namelen is %d. Content: family=%04x - addr: %08x \n", 
+        msg, msg->msg_name, msg->msg_namelen, ((struct sockaddr_in *)msg->msg_name)->sin_family, ((struct sockaddr_in *)msg->msg_name)->sin_addr.s_addr);
     }
     if (memcpy_toiovec(msg->msg_iov, kbuf, tot_len))
       return -EFAULT;
@@ -670,6 +698,10 @@ recv_success:
       memset(&tmp_scm, 0, sizeof(tmp_scm));
     }
     scm_recv(sock, msg, siocb->scm, flags);
+    if (tot_len < len) {
+        pico_event_clear(psk, PICO_SOCK_EV_RD);
+        pico_event_clear(psk, PICO_SOCK_EV_ERR);
+    }
     printk("Returning from recvmsg\n");
     return tot_len;
 }

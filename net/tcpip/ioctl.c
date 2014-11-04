@@ -296,6 +296,8 @@ static int picotcp_addroute(struct socket *sock, unsigned int cmd, unsigned long
       flags +=2;
 
   /* TODO: link from device name in rt_dev (u32-> *char) */
+  if (rte->rt_metric <= 0)
+      rte->rt_metric = 1;
 
   if (pico_ipv4_route_add(a, n, g, rte->rt_metric, link) < 0)
     return -pico_err;
