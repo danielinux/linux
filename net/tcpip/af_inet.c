@@ -10,6 +10,8 @@
 #define SOCK_CLOSED                 100
 
 #define TPROTO(psk) ((psk)->pico->proto->proto_number)
+#define picotcp_dbg(...) do{}while(0)
+//#define picotcp_dbg picotcp_dbg
 
 extern volatile int pico_stack_is_ready;
 extern void *picoLock;
@@ -68,7 +70,7 @@ static uint16_t bsd_to_pico_port(struct sockaddr *_saddr, socklen_t socklen)
         return saddr->sin6_port;
     } else {
         struct sockaddr_in *saddr = (struct sockaddr_in *)_saddr;
-        printk("Found IPv4, port is %hu\n", short_be(saddr->sin_port));
+        picotcp_dbg("Found IPv4, port is %hu\n", short_be(saddr->sin_port));
         return saddr->sin_port;
     }
 }
@@ -142,7 +144,7 @@ uint16_t pico_bsd_select(struct picotcp_sock *psk)
 {
     uint16_t events = psk->events & psk->revents; /* maybe an event we are waiting for, was already queued ? */
     DEFINE_WAIT(wait);
-    printk("Called SELECT\n");
+    picotcp_dbg("Called SELECT\n");
     /* wait for one of the selected events... */
     prepare_to_wait(sk_sleep(&psk->sk), &wait, TASK_INTERRUPTIBLE);
     while (!events)
@@ -156,7 +158,7 @@ uint16_t pico_bsd_select(struct picotcp_sock *psk)
         }
     }
     finish_wait(sk_sleep(&psk->sk), &wait);
-    printk("SELECT: wakeup!\n");
+    picotcp_dbg("SELECT: wakeup!\n");
     /* the event we were waiting for happened, now report it */
     return events; /* return any event(s) that occurred, that we were waiting for */
 }
@@ -228,7 +230,7 @@ static void picotcp_socket_event(uint16_t ev, struct pico_socket *s)
 
     }
 
-    printk("An event will be parsed! ev value is %hu\n", ev);
+    picotcp_dbg("An event will be parsed! ev value is %hu\n", ev);
 
     if(psk->in_use != 1)
         return;
@@ -264,7 +266,7 @@ static void picotcp_socket_event(uint16_t ev, struct pico_socket *s)
 
     /* sending the event, while no one was listening,
        will just cause an extra loop in select() */
-    printk("Waking up all the selects...\n");
+    picotcp_dbg("Waking up all the selects...\n");
     wake_up_interruptible(sk_sleep(&psk->sk));
     psk_unlock(psk);
 }
@@ -276,31 +278,31 @@ static int picotcp_connect(struct socket *sock, struct sockaddr *_saddr, int soc
   uint16_t port;
   uint16_t ev;
   int err;
-  printk("Called connect\n");
+  picotcp_dbg("Called connect\n");
 
   if (bsd_to_pico_addr(&addr, _saddr, socklen) < 0) {
-      printk("Connect: invalid address\n");
+      picotcp_dbg("Connect: invalid address\n");
       return -EINVAL;
   }
 
   port = bsd_to_pico_port(_saddr, socklen);
   if (port == 0) {
-      printk("Connect: invalid port\n");
+      picotcp_dbg("Connect: invalid port\n");
       return -EINVAL;
   }
 
-  printk("Calling pico_socket_connect\n");
+  picotcp_dbg("Calling pico_socket_connect\n");
   pico_mutex_lock(picoLock);
   err = pico_socket_connect(psk->pico, &addr, port);
   pico_mutex_unlock(picoLock);
-  printk("Calling pico_socket_connect: done\n");
+  picotcp_dbg("Calling pico_socket_connect: done\n");
 
   if (err) {
     return 0 - pico_err;
   }
 
   if (TPROTO(psk) == PICO_PROTO_UDP) {
-    printk("UDP: Connected\n");
+    picotcp_dbg("UDP: Connected\n");
     pico_event_clear(psk, PICO_SOCK_EV_CONN);
     return 0;
   }
@@ -309,14 +311,14 @@ static int picotcp_connect(struct socket *sock, struct sockaddr *_saddr, int soc
       return -EAGAIN;
   } else {
       /* wait for event */
-      printk("Trying to establish connection...\n");
+      picotcp_dbg("Trying to establish connection...\n");
       ev = pico_bsd_wait(psk, 0, 0, 0); /* wait for ERR, FIN and CONN */
   }
 
   if(ev & PICO_SOCK_EV_CONN)
   {
       /* clear the EV_CONN event */
-      printk("Connected\n");
+      picotcp_dbg("Connected\n");
       pico_event_clear(psk, PICO_SOCK_EV_CONN);
       return 0;
   } else {
@@ -331,9 +333,9 @@ static int picotcp_bind(struct socket *sock, struct sockaddr *local_addr, int so
    union pico_address addr;
    struct picotcp_sock *psk = picotcp_sock(sock);
    uint16_t port;
-   printk("Called bind\n");
+   picotcp_dbg("Called bind\n");
    if (bsd_to_pico_addr(&addr, local_addr, socklen) < 0) {
-        printk("bind: invalid address\n");
+        picotcp_dbg("bind: invalid address\n");
         return -EINVAL;
     }
     port = bsd_to_pico_port(local_addr, socklen);
@@ -343,13 +345,13 @@ static int picotcp_bind(struct socket *sock, struct sockaddr *local_addr, int so
     if(pico_socket_bind(psk->pico, &addr, &port) < 0)
     {
         pico_mutex_unlock(picoLock);
-        printk("bind: failed\n");
+        picotcp_dbg("bind: failed\n");
         return 0 - pico_err;
     }
 
     psk->state = SOCK_BOUND;
     pico_mutex_unlock(picoLock);
-    printk("Bind: success\n");
+    picotcp_dbg("Bind: success\n");
     return 0;
 }
 
@@ -414,20 +416,20 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
     union pico_address picoaddr;
     uint16_t port;
 
-    printk("Called ACCEPT\n");
+    picotcp_dbg("Called ACCEPT\n");
 
     if (psk->state != SOCK_LISTEN) {
-        printk("Invalid socket state, not listening\n");
+        picotcp_dbg("Invalid socket state, not listening\n");
         return -EOPNOTSUPP;
     }
 
-    printk("Going to sleep...\n");
+    picotcp_dbg("Going to sleep...\n");
     if (flags & O_NONBLOCK)
       events = PICO_SOCK_EV_CONN;
     else
       events = pico_bsd_wait(psk, 0, 0, 0);
 
-    printk("ACCEPT resumed\n");
+    picotcp_dbg("ACCEPT resumed\n");
 
     /* Here I check for psk again, to avoid races */
     if (!psk || !psk->in_use)
@@ -462,7 +464,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
         newpsk->in_use = 1;
         sock_graft(&newpsk->sk, newsock);
         pico_mutex_unlock(picoLock);
-        printk("ACCEPT: SUCCESS!\n");
+        picotcp_dbg("ACCEPT: SUCCESS!\n");
         return 0;
     }
     return -EAGAIN;
@@ -474,7 +476,7 @@ static int picotcp_listen(struct socket *sock, int backlog)
   struct picotcp_sock *psk = picotcp_sock(sock);
   int err;
   struct sock *sk = sock->sk;
-  printk("Called listen()\n");
+  picotcp_dbg("Called listen()\n");
   sk->sk_state = TCP_LISTEN;
   pico_mutex_lock(picoLock);
   err = pico_socket_listen(psk->pico, backlog);
@@ -483,7 +485,7 @@ static int picotcp_listen(struct socket *sock, int backlog)
   if (err)
       return 0 - pico_err;
 
-  printk("Listen: success\n");
+  picotcp_dbg("Listen: success\n");
   psk->state = SOCK_LISTEN;
   return 0;
 }
@@ -499,7 +501,7 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
     uint16_t port = 0;
     uint8_t *kbuf;
 
-    printk("Called picotcp_sendmsg\n");
+    picotcp_dbg("Called picotcp_sendmsg\n");
 
     if (len <= 0)
       return -EINVAL;
@@ -524,7 +526,7 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
       bsd_to_pico_addr(&_addr, msg->msg_name, msg->msg_namelen);
       port = bsd_to_pico_port(msg->msg_name, msg->msg_namelen);
       addr = &_addr;
-      printk("Address is copied\n");
+      picotcp_dbg("Address is copied\n");
     }
 
     memcpy_fromiovec(kbuf, msg->msg_iov, len);
@@ -538,7 +540,7 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
       else
         r = pico_socket_send(psk->pico, kbuf, len);
       psk_unlock(psk);
-      printk("> sendto returned %d - expected len is %d\n", r, len);
+      picotcp_dbg("> sendto returned %d - expected len is %d\n", r, len);
       if (r < 0) {
         kfree(kbuf);
         return 0 - pico_err;
@@ -569,7 +571,7 @@ static int picotcp_sendmsg(struct kiocb *cb, struct socket *sock,
       }
     }
 
-    printk("About to return from sendmsg. tot_len is %d\n", tot_len);
+    picotcp_dbg("About to return from sendmsg. tot_len is %d\n", tot_len);
     kfree(kbuf);
     return tot_len;
 }
@@ -590,7 +592,7 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
     static uint8_t *peeked_kbuf_start = NULL;
     static int peeked_kbuf_len = 0;
 
-    printk("Called picotcp_recvmsg\n");
+    picotcp_dbg("Called picotcp_recvmsg\n");
 
     if (len < 1) {
         return -EINVAL;
@@ -634,7 +636,7 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
       psk_lock(psk);
       r = pico_socket_recvfrom(psk->pico, kbuf, len - tot_len, &addr, &port);
       psk_unlock(psk);
-      printk("> recvfrom returned %d - expected len is %d\n", r, len - tot_len);
+      picotcp_dbg("> recvfrom returned %d - expected len is %d\n", r, len - tot_len);
       if (r < 0) {
         kfree(kbuf);
         return 0 - pico_err;
@@ -646,7 +648,7 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
         pico_event_clear(psk, PICO_SOCK_EV_RD);
         pico_event_clear(psk, PICO_SOCK_EV_ERR);
         if (tot_len > 0) {
-          printk("recvfrom returning %d\n", tot_len);
+          picotcp_dbg("recvfrom returning %d\n", tot_len);
           goto recv_success;
         }
       }
@@ -673,12 +675,12 @@ static int picotcp_recvmsg(struct kiocb *cb, struct socket *sock,
     }
 
 recv_success:
-    printk("About to return from recvmsg. tot_len is %d\n", tot_len);
+    picotcp_dbg("About to return from recvmsg. tot_len is %d\n", tot_len);
     if (msg->msg_name) {
       pico_addr_to_bsd(msg->msg_name, msg->msg_namelen, &addr, PICO_PROTO_IPV4);
       pico_port_to_bsd(msg->msg_name, msg->msg_namelen, port);
       msg->msg_namelen = sizeof(struct sockaddr_in);
-      printk("Address is copied to msg(%p). msg->name is at %p, namelen is %d. Content: family=%04x - addr: %08x \n", 
+      picotcp_dbg("Address is copied to msg(%p). msg->name is at %p, namelen is %d. Content: family=%04x - addr: %08x \n", 
         msg, msg->msg_name, msg->msg_namelen, ((struct sockaddr_in *)msg->msg_name)->sin_family, ((struct sockaddr_in *)msg->msg_name)->sin_addr.s_addr);
     }
     if (memcpy_toiovec(msg->msg_iov, kbuf, tot_len))
@@ -702,14 +704,14 @@ recv_success:
         pico_event_clear(psk, PICO_SOCK_EV_RD);
         pico_event_clear(psk, PICO_SOCK_EV_ERR);
     }
-    printk("Returning from recvmsg\n");
+    picotcp_dbg("Returning from recvmsg\n");
     return tot_len;
 }
 
 static int picotcp_shutdown(struct socket *sock, int how)
 {
     struct picotcp_sock *psk = picotcp_sock(sock);
-    printk("Called picotcp_shutdown\n");
+    picotcp_dbg("Called picotcp_shutdown\n");
     how++; /* ... see ipv4/af_inet.c */
 
     if(psk->pico) /* valid socket, try to close it */
@@ -727,7 +729,7 @@ static int picotcp_release(struct socket *sock)
   struct picotcp_sock *psk = picotcp_sock(sock);
   if (!psk)
     return -EINVAL;
-  printk("Called picotcp_release()\n");
+  picotcp_dbg("Called picotcp_release()\n");
   pico_mutex_lock(picoLock);
   psk_lock(psk);
   pico_socket_close(psk->pico);
@@ -866,12 +868,12 @@ static int picotcp_create(struct net *net, struct socket *sock, int protocol, in
   struct picotcp_sock *psk;
   struct pico_socket *ps;
 
-  printk("Called picotcp_create\n");
+  picotcp_dbg("Called picotcp_create\n");
 
   sock->ops = &picotcp_proto_ops;
 
-  printk("Selected socket type: %d\n", sock->type);
-  printk("Selected protocol: %d\n", protocol);
+  picotcp_dbg("Selected socket type: %d\n", sock->type);
+  picotcp_dbg("Selected protocol: %d\n", protocol);
 
   /* Convert IP sockets into DGRAM, so ioctl are still possible (e.g.: ifconfig) */
   if (sock->type == SOCK_DGRAM)

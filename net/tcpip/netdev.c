@@ -43,9 +43,8 @@
 extern volatile int pico_stack_is_ready;
 extern int sysctl_picotcp_dutycycle;
 
-#pragma GCC push_options
-#pragma GCC optimize("O0")
-
+#define netdev_debug(...) do{}while(0)
+//#define netdev_debug printk
 
 
 /* Device related */
@@ -74,7 +73,7 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
     struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
     struct sk_buff *skb;
     uint8_t *start_buf;
-    printk("%s: network send called (%d bytes)\n", lnx->netdev->name, len);
+    netdev_debug("%s: network send called (%d bytes)\n", lnx->netdev->name, len);
     rcu_read_lock();
 
     //skb = netdev_alloc_skb(lnx->netdev, len);
@@ -84,17 +83,17 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
     skb->dev = ((struct pico_device_linux*)dev)->netdev;
     start_buf = skb_put(skb, len);
     if (!start_buf) {
-      printk("failed skb_put!\n");
+      netdev_debug("failed skb_put!\n");
       goto fail_free;
     }
     memcpy(start_buf, buf, len);
     if (!pico_stack_is_ready) {
-        printk("network send: stack not ready\n");
+        netdev_debug("network send: stack not ready\n");
         goto fail_free;
     }
 
     if (!lnx->netdev || !lnx->netdev->netdev_ops || !lnx->netdev->netdev_ops->ndo_start_xmit) {
-        printk("network send: device %s not ready\n", lnx->netdev->name);
+        netdev_debug("network send: device %s not ready\n", lnx->netdev->name);
         goto fail_free;
     }
     if (dev->eth) {
@@ -106,11 +105,11 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
 
     /* Deliver the packet to the device driver */
     if (NETDEV_TX_OK != dev_queue_xmit(skb)) {
-      printk("Error queuing TX frame!\n");
+      netdev_debug("Error queuing TX frame!\n");
       goto fail_free;
     }
     rcu_read_unlock();
-    printk("network send: done!\n");
+    netdev_debug("network send: done!\n");
     return len;
 
 fail_free:
@@ -127,7 +126,7 @@ static rx_handler_result_t pico_linux_recv(struct sk_buff **pskb)
     BUG_ON(!skb);
     BUG_ON(!skb->dev);
     lnx = (struct pico_device_linux *)skb->dev->picodev;
-    printk("%s:network recv (%d B)\n", lnx->netdev->name, skb->len);
+    netdev_debug("%s:network recv (%d B)\n", lnx->netdev->name, skb->len);
     pico_stack_recv(&lnx->dev, skb->data, skb->len);
     return RX_HANDLER_CONSUMED;
 }
@@ -183,7 +182,7 @@ void pico_dev_attach(struct net_device *netdev)
     pico_linux_dev->netdev = netdev;
     pico_linux_dev->dev.send = pico_linux_send;
     if (netdev_rx_handler_register(netdev, pico_linux_recv, NULL) < 0) {
-        printk("%s: unable to register for RX events\n", netdev->name);
+        netdev_debug("%s: unable to register for RX events\n", netdev->name);
     }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -196,4 +195,3 @@ void pico_dev_attach(struct net_device *netdev)
 }
 
 
-#pragma GCC pop_options
