@@ -42,28 +42,32 @@
 
 extern volatile int pico_stack_is_ready;
 extern int sysctl_picotcp_dutycycle;
-static struct workqueue_struct* pico_net_dev_init_workqueue;
-static struct pico_netdev_work net_device_init;
 
 #define netdev_debug(...) do{}while(0)
+//#define netdev_debug printk
 
 
 /* Device related */
-
-struct pico_device_linux {
-    struct pico_device dev;
-    struct net_device *netdev;
-};
-
+struct pico_device_linux;
 
 struct pico_netdev_work
 {
 	struct delayed_work work;
-	struct net_device* netdev;
+	struct pico_device_linux* pico;
 };
 
+
+struct pico_device_linux {
+    struct pico_device dev;
+    struct net_device *netdev;
+    struct workqueue_struct* wqueue;
+    struct pico_netdev_work net_init;
+};
+
+
+
 #ifdef CONFIG_NET_POLL_CONTROLLER
-}static int pico_linux_poll(struct pico_device *dev, int loop_score)
+static int pico_linux_poll(struct pico_device *dev, int loop_score)
 {
     struct pico_device_linux *lnx = (struct pico_device_linux *) dev;
     if (!lnx || !lnx->netdev || !lnx->netdev->netdev_ops)
@@ -105,10 +109,10 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
         goto fail_free;
     }
     if (dev->eth) {
-      skb->mac_header = skb->data - skb->head;
-      skb->network_header = skb->mac_header + 14;
+      skb->mac_header = (sk_buff_data_t) (skb->data - skb->head);
+      skb->network_header = (sk_buff_data_t)(skb->mac_header + 14);
     } else {
-      skb->network_header = skb->data - skb->head;
+      skb->network_header = (sk_buff_data_t)(skb->data - skb->head);
     }
 
     /* Deliver the packet to the device driver */
@@ -127,46 +131,38 @@ fail_unlock:
     return 0;
 }
 
-static rx_handler_result_t pico_linux_recv(struct sk_buff **pskb)
-{
-  struct sk_buff *skb = *pskb;
-    struct pico_device_linux *lnx;
-    BUG_ON(!skb);
-    BUG_ON(!skb->dev);
-    lnx = (struct pico_device_linux *)skb->dev->picodev;
-    netdev_debug("%s:network recv (%d B)\n", lnx->netdev->name, skb->len);
-    pico_stack_recv(&lnx->dev, skb->data, skb->len);
-    return RX_HANDLER_CONSUMED;
-}
-
-
-
-
 void pico_dev_attach(struct net_device *netdev);
 
 
-void cleanup_workqueue(void) {
-	flush_workqueue(pico_net_dev_init_workqueue);
-	destroy_workqueue(pico_net_dev_init_workqueue);
+void cleanup_workqueue(struct pico_device_linux *pico) {
+    if (pico && pico->wqueue) {
+	    flush_workqueue(pico->wqueue);
+	    destroy_workqueue(pico->wqueue);
+    }
 }
 
 
 static void picotcp_dev_attach_retry(struct work_struct *todo)
 {
+	struct pico_netdev_work *temp;
+    struct delayed_work *dwork;
+    struct pico_device_linux *pico;
+
+    dwork = to_delayed_work(todo);
+	temp = container_of(dwork, struct pico_netdev_work, work);
+    pico = temp->pico;
+
 	if (!pico_stack_is_ready) {
-		queue_delayed_work(pico_net_dev_init_workqueue, &(net_device_init.work), sysctl_picotcp_dutycycle);
+	    printk("Stack still not ready. Device %s will be attached later.\n", pico->netdev->name);
+		queue_delayed_work(pico->wqueue, &(pico->net_init.work), 100 * sysctl_picotcp_dutycycle);
 		return;
 	}
 
-	struct pico_netdev_work* temp;
-    struct net_device* netdev;
-
-	temp= container_of(todo, struct pico_netdev_work, work);
-	netdev= temp->netdev;
-
 	rtnl_lock();
-	pico_dev_attach(netdev);
+	pico_dev_attach(pico->netdev);
 	rtnl_unlock();
+    printk("Cleaning up workqueue\n");
+	cleanup_workqueue(pico);
 
 }
 
@@ -181,18 +177,19 @@ void pico_dev_attach(struct net_device *netdev)
     if (!netdev)
         return;
 
-    if (!pico_stack_is_ready) {
-		pico_net_dev_init_workqueue= create_singlethread_workqueue("picotcp_dev_attach_retry");
-		if (pico_net_dev_init_workqueue) {
-			INIT_DELAYED_WORK(&(net_device_init.work), picotcp_dev_attach_retry);
-			net_device_init.netdev =netdev;
+    pico_linux_dev->netdev = netdev;
 
-			queue_delayed_work(pico_net_dev_init_workqueue, &(net_device_init.work), sysctl_picotcp_dutycycle);
+    if (!pico_stack_is_ready) {
+	    printk("Stack not ready. Device %s will be attached later.\n", netdev->name);
+		pico_linux_dev->wqueue = create_singlethread_workqueue("picotcp_dev_attach_retry");
+		if (pico_linux_dev->wqueue) {
+			INIT_DELAYED_WORK(&(pico_linux_dev->net_init.work), picotcp_dev_attach_retry);
+			pico_linux_dev->net_init.pico = pico_linux_dev;
+			queue_delayed_work(pico_linux_dev->wqueue, &(pico_linux_dev->net_init.work), 100 * sysctl_picotcp_dutycycle);
 
 		} else {
 			printk("Workqueue for net device init not created. Device %s will not be attached.\n", netdev->name);
 		}
-
 		return;
     }
 
@@ -208,18 +205,11 @@ void pico_dev_attach(struct net_device *netdev)
         return;
     }
 
-    pico_linux_dev->netdev = netdev;
     pico_linux_dev->dev.send = pico_linux_send;
-    if (netdev_rx_handler_register(netdev, pico_linux_recv, NULL) < 0) {
-        netdev_debug("%s: unable to register for RX events\n", netdev->name);
-    }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
     pico_linux_dev->dev.poll = pico_linux_poll;
 #endif
-    dbg("Device %s created.\n", pico_linux_dev->dev.name);
+    netdev_debug("Device %s created.\n", pico_linux_dev->dev.name);
     netdev->picodev = &pico_linux_dev->dev;
-
-
-	cleanup_workqueue();
 }
