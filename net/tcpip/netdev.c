@@ -42,9 +42,10 @@
 
 extern volatile int pico_stack_is_ready;
 extern int sysctl_picotcp_dutycycle;
+static struct workqueue_struct* pico_net_dev_init_workqueue;
+static struct pico_netdev_work net_device_init;
 
 #define netdev_debug(...) do{}while(0)
-//#define netdev_debug printk
 
 
 /* Device related */
@@ -52,6 +53,13 @@ extern int sysctl_picotcp_dutycycle;
 struct pico_device_linux {
     struct pico_device dev;
     struct net_device *netdev;
+};
+
+
+struct pico_netdev_work
+{
+	struct delayed_work work;
+	struct net_device* netdev;
 };
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -131,23 +139,38 @@ static rx_handler_result_t pico_linux_recv(struct sk_buff **pskb)
     return RX_HANDLER_CONSUMED;
 }
 
-struct timer_list picotcp_dev_attach_retry_timer;
+
+
+
 void pico_dev_attach(struct net_device *netdev);
 
-static void picotcp_dev_attach_retry(unsigned long x)
-{
-    if (!pico_stack_is_ready) {
-        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(sysctl_picotcp_dutycycle * 4);
-        picotcp_dev_attach_retry_timer.function = picotcp_dev_attach_retry;
-        picotcp_dev_attach_retry_timer.data = x;
-        add_timer(&picotcp_dev_attach_retry_timer);
-    } else {
-        struct net_device *netdev = (struct net_device *)x;
-        rtnl_lock();
-        pico_dev_attach(netdev);
-        rtnl_unlock();
-    }
+
+void cleanup_workqueue(void) {
+	flush_workqueue(pico_net_dev_init_workqueue);
+	destroy_workqueue(pico_net_dev_init_workqueue);
 }
+
+
+static void picotcp_dev_attach_retry(struct work_struct *todo)
+{
+	if (!pico_stack_is_ready) {
+		queue_delayed_work(pico_net_dev_init_workqueue, &(net_device_init.work), sysctl_picotcp_dutycycle);
+		return;
+	}
+
+	struct pico_netdev_work* temp;
+    struct net_device* netdev;
+
+	temp= container_of(todo, struct pico_netdev_work, work);
+	netdev= temp->netdev;
+
+	rtnl_lock();
+	pico_dev_attach(netdev);
+	rtnl_unlock();
+
+}
+
+
 
 void pico_dev_attach(struct net_device *netdev)
 {
@@ -155,21 +178,27 @@ void pico_dev_attach(struct net_device *netdev)
     uint8_t *macaddr = NULL;
     const uint8_t macaddr_zero[6] = {0, 0, 0, 0, 0, 0};
 
-
     if (!netdev)
         return;
-    
+
     if (!pico_stack_is_ready) {
-        init_timer(&picotcp_dev_attach_retry_timer);
-        picotcp_dev_attach_retry_timer.expires = jiffies + msecs_to_jiffies(sysctl_picotcp_dutycycle * 4);
-        picotcp_dev_attach_retry_timer.function = picotcp_dev_attach_retry;
-        picotcp_dev_attach_retry_timer.data = (unsigned long)netdev;
-        add_timer(&picotcp_dev_attach_retry_timer);
-        return;
+		pico_net_dev_init_workqueue= create_singlethread_workqueue("picotcp_dev_attach_retry");
+		if (pico_net_dev_init_workqueue) {
+			INIT_DELAYED_WORK(&(net_device_init.work), picotcp_dev_attach_retry);
+			net_device_init.netdev =netdev;
+
+			queue_delayed_work(pico_net_dev_init_workqueue, &(net_device_init.work), sysctl_picotcp_dutycycle);
+
+		} else {
+			printk("Workqueue for net device init not created. Device %s will not be attached.\n", netdev->name);
+		}
+
+		return;
     }
 
+
     if (!pico_linux_dev)
-        panic("Unable to initialize network device\n"); 
+        panic("Unable to initialize network device\n");
 
     if (memcmp(netdev->dev_addr, macaddr_zero, 6) != 0) {
         macaddr = (uint8_t *) netdev->dev_addr;
@@ -192,6 +221,5 @@ void pico_dev_attach(struct net_device *netdev)
     netdev->picodev = &pico_linux_dev->dev;
 
 
+	cleanup_workqueue();
 }
-
-
