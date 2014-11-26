@@ -51,6 +51,10 @@
 #include <linux/neighbour.h>
 #include <uapi/linux/netdevice.h>
 
+#ifdef CONFIG_PICOTCP
+struct pico_device;
+#endif
+
 struct netpoll_info;
 struct device;
 struct phy_device;
@@ -1561,6 +1565,9 @@ struct net_device {
 	int group;
 
 	struct pm_qos_request	pm_qos_req;
+#ifdef CONFIG_PICOTCP
+    struct pico_device *picodev;
+#endif
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
 

@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
-//#define DEBUG
+#define DEBUG
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
@@ -27,6 +27,7 @@
 #include <linux/slab.h>
 #include <linux/cpu.h>
 #include <linux/average.h>
+
 
 static int napi_weight = NAPI_POLL_WEIGHT;
 module_param(napi_weight, int, 0444);
@@ -442,6 +443,7 @@ static void receive_buf(struct receive_queue *rq, void *buf, unsigned int len)
 	struct virtnet_stats *stats = this_cpu_ptr(vi->stats);
 	struct sk_buff *skb;
 	struct skb_vnet_hdr *hdr;
+    printk("Virtio_net: Received buffer, len: %d\n", len);
 
 	if (unlikely(len < sizeof(struct virtio_net_hdr) + ETH_HLEN)) {
 		pr_debug("%s: short packet %i\n", dev->name, len);
@@ -794,6 +796,8 @@ static void free_old_xmit_skbs(struct send_queue *sq)
 		dev_kfree_skb_any(skb);
 	}
 }
+#pragma GCC push_options
+#pragma GCC optimize("O0")
 
 static int xmit_skb(struct send_queue *sq, struct sk_buff *skb)
 {
@@ -862,6 +866,7 @@ static int xmit_skb(struct send_queue *sq, struct sk_buff *skb)
 	return virtqueue_add_outbuf(sq->vq, sq->sg, num_sg, skb, GFP_ATOMIC);
 }
 
+#pragma GCC pop_options
 static netdev_tx_t start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct virtnet_info *vi = netdev_priv(dev);

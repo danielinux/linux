@@ -428,6 +428,7 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 };
 
+
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))
 
 #define rcu_dereference_sk_user_data(sk)	rcu_dereference(__sk_user_data((sk)))

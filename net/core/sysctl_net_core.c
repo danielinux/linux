@@ -26,6 +26,8 @@ static int zero = 0;
 static int one = 1;
 static int ushort_max = USHRT_MAX;
 
+int sysctl_picotcp_dutycycle = 1;
+
 #ifdef CONFIG_RPS
 static int rps_sock_flow_sysctl(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp, loff_t *ppos)
@@ -357,6 +359,13 @@ static struct ctl_table net_core_table[] = {
 	{
 		.procname	= "warnings",
 		.data		= &net_msg_warn,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "picotcp_duty_cycle",
+		.data		= &sysctl_picotcp_dutycycle,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
