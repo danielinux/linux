@@ -109,10 +109,10 @@ static int pico_linux_send(struct pico_device *dev, void *buf, int len)
         goto fail_free;
     }
     if (dev->eth) {
-      skb->mac_header = (sk_buff_data_t) (skb->data - skb->head);
-      skb->network_header = (sk_buff_data_t)(skb->mac_header + 14);
+      skb->mac_header = skb->data - skb->head;
+      skb->network_header = skb->mac_header + 14;
     } else {
-      skb->network_header = (sk_buff_data_t)(skb->data - skb->head);
+      skb->network_header = skb->data - skb->head;
     }
 
     /* Deliver the packet to the device driver */
