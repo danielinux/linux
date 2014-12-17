@@ -3296,7 +3296,7 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	trace_netif_rx(skb);
 #ifdef CONFIG_PICOTCP
-    printk("%s: Netif_rx called, packet len is %d\n", skb->dev->name, skb->len);
+//    printk("%s: Netif_rx called, packet len is %d\n", skb->dev->name, skb->len);
     pico_stack_recv(skb->dev->picodev, skb->data, skb->len);
     return 0;
 #endif

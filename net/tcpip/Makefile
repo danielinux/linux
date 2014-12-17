@@ -8,5 +8,6 @@ obj-y     := af_inet.o \
 			sock.o \
 			ioctl.o \
 			proc.o \
+			netlink.o \
 			core.o
 

@@ -378,6 +378,6 @@ int picotcp_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
     default:
       err = -EOPNOTSUPP;
   }
-  printk("Called ioctl(%u,%lu), returning %d\n", cmd, arg, err);
+//  printk("Called ioctl(%u,%lu), returning %d\n", cmd, arg, err);
   return err;
 }

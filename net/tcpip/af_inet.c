@@ -1,6 +1,7 @@
 /* Linux kernel osal implementation  */
 #include <picotcp.h>
 
+
 #define SOCK_OPEN                   0
 #define SOCK_BOUND                  1
 #define SOCK_LISTEN                 2
@@ -15,7 +16,7 @@
 
 extern volatile int pico_stack_is_ready;
 extern void *picoLock;
-
+extern void picotcp_netlink_register(void);
 
 /* UTILS */
 void * pico_mutex_init(void) {
@@ -918,6 +919,7 @@ static struct pernet_operations picotcp_net_ops = {
   .exit = picotcp_net_exit,
 };
 
+
 int af_inet_picotcp_init(void)
 {
   int rc = proto_register(&picotcp_proto, 1);
@@ -925,6 +927,8 @@ int af_inet_picotcp_init(void)
     panic("Cannot register AF_INET family for PicoTCP\n");
   sock_register(&picotcp_family_ops);
   register_pernet_subsys(&picotcp_net_ops);
+
+  picotcp_netlink_register();
   return 0;
 }
 
