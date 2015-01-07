@@ -11,8 +11,8 @@
 #define SOCK_CLOSED                 100
 
 #define TPROTO(psk) ((psk)->pico->proto->proto_number)
-//#define picotcp_dbg(...) do{}while(0)
-#define picotcp_dbg printk 
+#define picotcp_dbg(...) do{}while(0)
+//#define picotcp_dbg printk 
 
 extern volatile int pico_stack_is_ready;
 extern void *picoLock;
