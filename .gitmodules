@@ -1,0 +1,4 @@
+[submodule "net/tcpip/picotcp"]
+	path = net/tcpip/picotcp
+	url = https://github.com/tass-belgium/picotcp.git
+	branch = development

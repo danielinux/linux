@@ -2,7 +2,7 @@
 # Makefile for the Linux networking core.
 #
 
-ccflags-$(CONFIG_PICOTCP) += -Inet/picotcp/include -Inet/picotcp/modules
+ccflags-$(CONFIG_PICOTCP) += -Inet/tcpip/picotcp/include -Inet/tcpip/picotcp/modules -Inet/tcpip
 
 obj-y := sock.o request_sock.o skbuff.o iovec.o datagram.o stream.o scm.o \
 	 gen_stats.o gen_estimator.o net_namespace.o secure_seq.o flow_dissector.o

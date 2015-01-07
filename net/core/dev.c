@@ -3715,7 +3715,7 @@ static int __netif_receive_skb(struct sk_buff *skb)
 {
 	int ret;
 #ifdef CONFIG_PICOTCP
-    printk("%s: Netif_receive_skb called, packet len is %d, data len is %d\n", skb->dev->name, skb->len, skb->data_len);
+    //printk("%s: Netif_receive_skb called, packet len is %d, data len is %d\n", skb->dev->name, skb->len, skb->data_len);
     if (skb->protocol > 0)
         pico_stack_recv(skb->dev->picodev, skb->data - 14, skb->len + 14);
     else 

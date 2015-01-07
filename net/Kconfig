@@ -82,7 +82,7 @@ source "net/netlabel/Kconfig"
 
 endif # if INET
 
-source "net/picotcp/Kconfig"
+source "net/tcpip/Kconfig"
 
 config NETWORK_SECMARK
 	bool "Security Marking"

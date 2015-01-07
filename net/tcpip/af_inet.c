@@ -11,8 +11,8 @@
 #define SOCK_CLOSED                 100
 
 #define TPROTO(psk) ((psk)->pico->proto->proto_number)
-#define picotcp_dbg(...) do{}while(0)
-//#define picotcp_dbg picotcp_dbg
+//#define picotcp_dbg(...) do{}while(0)
+#define picotcp_dbg printk 
 
 extern volatile int pico_stack_is_ready;
 extern void *picoLock;
@@ -197,6 +197,8 @@ static unsigned int picotcp_poll(struct file *file, struct socket *sock, poll_ta
   if (sk->sk_err)
     mask |= POLLERR;
   if (psk->revents & PICO_SOCK_EV_CLOSE)
+    mask |= POLLHUP;
+  if (psk->revents & PICO_SOCK_EV_FIN)
     mask |= POLLHUP;
   if (psk->revents & PICO_SOCK_EV_RD)
     mask |= POLLIN;
@@ -451,6 +453,7 @@ static int picotcp_accept(struct socket *sock, struct socket *newsock, int flags
             return  0 - pico_err;
         }
         pico_event_clear(psk, PICO_SOCK_EV_CONN); /* clear the CONN event the listening socket */
+        picotcp_dbg("Socket accepted: %p\n", ps);
         newpsk = picotcp_sock_new(&psk->sk, psk->net, psk->proto);
         if (!newpsk) {
           pico_mutex_unlock(picoLock);
@@ -732,7 +735,7 @@ static int picotcp_release(struct socket *sock)
   struct picotcp_sock *psk = picotcp_sock(sock);
   if (!psk)
     return -EINVAL;
-  picotcp_dbg("Called picotcp_release()\n");
+  picotcp_dbg("Called picotcp_release(%p)\n", psk->pico);
   pico_mutex_lock(picoLock);
   psk_lock(psk);
   pico_socket_close(psk->pico);
@@ -888,6 +891,8 @@ static int picotcp_create(struct net *net, struct socket *sock, int protocol, in
   ps = pico_socket_open(PICO_PROTO_IPV4, protocol, picotcp_socket_event);
   if (!ps) 
     return 0 - pico_err;
+
+  picotcp_dbg("Socket created: %p\n", ps);
 
   psk = picotcp_sock_new(NULL, net, protocol);
   if (!psk)
