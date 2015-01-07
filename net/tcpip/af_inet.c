@@ -200,6 +200,8 @@ static unsigned int picotcp_poll(struct file *file, struct socket *sock, poll_ta
     mask |= POLLHUP;
   if (psk->revents & PICO_SOCK_EV_RD)
     mask |= POLLIN;
+  if (psk->revents & PICO_SOCK_EV_CONN)
+    mask |= POLLIN;
   if (psk->revents & PICO_SOCK_EV_WR)
     mask |= POLLOUT;
 
